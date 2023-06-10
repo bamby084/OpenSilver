@@ -22,6 +22,7 @@ using System.Windows.Markup;
 using System.Diagnostics;
 using CSHTML5.Internals.Controls;
 using OpenSilver.Internal.Xaml.Context;
+using OpenSilver.Internal;
 
 #if MIGRATION
 using System.Windows.Controls.Primitives;
@@ -149,7 +150,7 @@ namespace Windows.UI.Xaml.Controls
             {
                 Template = new TemplateContent(
                     new XamlContext(),
-                    (owner, context) => new StackPanel { TemplatedParent = owner }                    
+                    (owner, context) => new StackPanel { TemplatedParent = owner.AsDependencyObject() }                    
                 )
             };
 
@@ -494,27 +495,6 @@ namespace Windows.UI.Xaml.Controls
 
         #region Internal Methods
 
-        internal void ScrollIntoViewImpl(int index)
-        {
-            if (index >= 0 && index < Items.Count)
-            {
-                if (ItemsHost is VirtualizingPanel vp)
-                {
-                    vp.BringIndexIntoViewInternal(index);
-                }
-                else
-                {
-                    if (ItemContainerGenerator.ContainerFromIndex(index) is ListBoxItem container
-                        && container.INTERNAL_OuterDomElement != null)
-                    {
-                        OpenSilver.Interop.ExecuteJavaScript(
-                            "$0.scrollIntoView({ block: 'nearest'})",
-                            container.INTERNAL_OuterDomElement);
-                    }
-                }
-            }
-        }
-
         // adjust ItemInfos after a generator status change
         internal void AdjustItemInfoAfterGeneratorChange(ItemInfo info)
         {
@@ -773,7 +753,7 @@ namespace Windows.UI.Xaml.Controls
         }
 
         internal void NavigateToItem(object item, int elementIndex)
-            => FocusItem(NewItemInfo(item, ItemContainerGenerator.ContainerFromIndex(elementIndex)));
+            => FocusItem(NewItemInfo(item, ItemContainerGenerator.ContainerFromItem(item), elementIndex));
 
         internal virtual bool FocusItem(ItemInfo info) => false;
 
@@ -888,7 +868,7 @@ namespace Windows.UI.Xaml.Controls
                     {
                         TextBlock textBlock = new TextBlock();
                         textBlock.SetBinding(TextBlock.TextProperty, new Binding(displayMemberPath ?? string.Empty));
-                        textBlock.TemplatedParent = control;
+                        textBlock.TemplatedParent = control.AsDependencyObject();
 
                         return textBlock;
                     }                    
@@ -901,9 +881,8 @@ namespace Windows.UI.Xaml.Controls
         public static ItemsControl GetItemsOwner(DependencyObject element)
         {
             ItemsControl container = null;
-            Panel panel = element as Panel;
 
-            if (panel != null && panel.IsItemsHost)
+            if (element is Panel panel && panel.IsItemsHost)
             {
                 // see if element was generated for an ItemsPresenter
                 ItemsPresenter ip = ItemsPresenter.FromPanel(panel);
@@ -913,11 +892,6 @@ namespace Windows.UI.Xaml.Controls
                     // if so use the element whose style begat the ItemsPresenter
                     container = ip.Owner;
                 }
-                //else
-                //{
-                //    // otherwise use element's templated parent
-                //    container = panel.TemplatedParent as ItemsControl;
-                //}
             }
 
             return container;
@@ -972,7 +946,7 @@ namespace Windows.UI.Xaml.Controls
         /// be useful for example to replace the rendering with a custom 
         /// HTML-based one.
         /// </summary>
-        [Obsolete("Disabling default rendering is not supported anymore.")]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         protected void DisableDefaultRendering()
         {
         }
@@ -988,57 +962,18 @@ namespace Windows.UI.Xaml.Controls
         /// correct type, otherwise it returns null if no container is to be 
         /// created, or it returns the new container otherwise.
         /// </returns>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         protected virtual SelectorItem INTERNAL_GenerateContainer(object item)
         {
             return (SelectorItem)this.GetContainerFromItem(item);
         }
 
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         protected virtual void OnChildItemRemoved(object item)
         {
             // This is intented to be overridden by the controls that have 
             // a "SelectedItem" to make sure that the item is de-selected 
             // in case that the element is removed.
-        }
-
-        [Obsolete]
-        protected FrameworkElement GenerateFrameworkElementToRenderTheItem(object item)
-        {
-            //---------------------------------------------------
-            // if the item is a FrameworkElement, return itself
-            //---------------------------------------------------
-            FrameworkElement result = item as FrameworkElement;
-            if (result == null)
-            {
-                object displayElement = PropertyPathHelper.AccessValueByApplyingPropertyPathIfAny(item, this.DisplayMemberPath);
-                if (this.ItemTemplate != null)
-                {
-                    //---------------------------------------------------
-                    // An ItemTemplate was specified, so we instantiate 
-                    // it and return it
-                    //---------------------------------------------------
-
-                    // Apply the data template
-                    result = ItemTemplate.INTERNAL_InstantiateFrameworkTemplate();
-                    result.DataContext = displayElement;
-                }
-                else
-                {
-                    //---------------------------------------------------
-                    // Otherwise we simply call "ToString()" to display 
-                    // the item as a string inside a TextBlock
-                    //---------------------------------------------------
-
-                    ContentPresenter container = new ContentPresenter();
-                    Binding b = new Binding(this.DisplayMemberPath);
-                    container.SetBinding(ContentPresenter.ContentProperty, b);
-                    container.DataContext = item;
-                    result = container;
-                }
-            }
-            this.PrepareContainerForItemOverride(result, item);
-            return result;
         }
 
         /// <summary>
@@ -1047,7 +982,7 @@ namespace Windows.UI.Xaml.Controls
         /// <returns>
         /// The element that is used to display the given item.
         /// </returns>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         protected virtual DependencyObject GetContainerFromItem(object item)
         {
             return null;

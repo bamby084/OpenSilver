@@ -1182,9 +1182,9 @@ namespace Windows.UI.Xaml.Controls
         /// the event data.
         /// </param>
 #if MIGRATION
-        protected internal override void OnMouseLeave(MouseEventArgs e)
+        protected override void OnMouseLeave(MouseEventArgs e)
 #else
-        protected internal override void OnPointerExited(PointerRoutedEventArgs e)
+        protected override void OnPointerExited(PointerRoutedEventArgs e)
 #endif
         {
             if (Interaction.AllowMouseLeave(e))
@@ -1679,6 +1679,14 @@ namespace Windows.UI.Xaml.Controls
                 object item = (parent != null) ?
                     parent.ItemContainerGenerator.ItemFromContainer(this) :
                     view.ItemContainerGenerator.ItemFromContainer(this);
+
+                // If the item is unset, it means the containers have not been
+                // generated yet. It means that this container's item is itself.
+                if (item == DependencyProperty.UnsetValue)
+                {
+                    item = this;
+                }
+
                 view.ChangeSelection(item, this, selected);
             }
         }

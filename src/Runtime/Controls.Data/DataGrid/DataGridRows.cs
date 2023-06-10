@@ -8,8 +8,11 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using System.Linq;
 using System;
+using CSHTML5.Internal;
+using OpenSilver.Internal.Xaml;
 
 #if MIGRATION
 using System.Windows.Automation.Peers;
@@ -547,6 +550,11 @@ namespace Windows.UI.Xaml.Controls
         {
             if (_measured)
             {
+                if (_isProgressiveLoadingInProgress)
+                {
+                    _pendingRefreshRowsArgs = new bool[] { recycleRows, clearRows };
+                    return;
+                }
                 // _desiredCurrentColumnIndex is used in MakeFirstDisplayedCellCurrentCell to set the
                 // column position back to what it was before the refresh
                 this._desiredCurrentColumnIndex = this.CurrentColumnIndex;
@@ -836,6 +844,12 @@ namespace Windows.UI.Xaml.Controls
                 }
             }
 #endif
+            // this can happen while changing ItemsSource while progressive loading rows
+            if (_isProgressiveLoadingInProgress && slot != SlotCount)
+            {
+                return;
+            }
+
             Debug.Assert(slot == this.SlotCount);
 
             OnAddedElement_Phase1(slot, element);
@@ -845,22 +859,144 @@ namespace Windows.UI.Xaml.Controls
             OnElementsChanged(true /*grew*/);
         }
 
+        /// <summary>
+        /// Global settings for rows progressive loading (NOTE: <see cref="ProgressiveLoadingRowChunkSize"/> overrides the global settings)
+        /// null or &lt;= 0 : disable progressive loading
+        /// &gt; 0 : enable progressive loading with this chunk size
+        /// </summary>
+        public static int? GlobalProgressiveLoadingChunkSize { get; set; }
+
+        /// <summary>
+        /// Local settings for rows progressive loading
+        /// null: uses global settings (<see cref="GlobalProgressiveLoadingChunkSize"/>)
+        /// &lt;= 0 : disable progressive loading even if global is enabled
+        /// &gt; 0 : enable progressive loading with this chunk size
+        /// </summary>
+        public int? ProgressiveLoadingRowChunkSize { get; set; }
+
+        /// <summary>
+        /// Fires when progressive loading starts and ends
+        /// </summary>
+        public event EventHandler<DataGridProgressiveLoadingInProgressChangedEventArgs> ProgressiveLoadingInProgressChanged;
+
+        private void OnProgressiveLoadingInProgressChanged(bool value)
+        {
+            _isProgressiveLoadingInProgress = value;
+            ProgressiveLoadingInProgressChanged?.Invoke(this, new DataGridProgressiveLoadingInProgressChangedEventArgs(value));
+        }
+
+        private bool _isProgressiveLoadingInProgress;
+        private bool[] _pendingRefreshRowsArgs;        
+
+        internal class SlotCreationParams
+        {
+            internal int totalSlots;
+            internal IEnumerator<int> groupSlots;
+            internal int nextGroupSlot;
+            internal int chunkSize;
+            internal int chunkSlots;
+            internal int addedfRows;
+            internal int slot;
+        }
+
+        private SlotCreationParams _pausedSlotCreationParam = null;
+
         private void AddSlots(int totalSlots)
         {
             this.SlotCount = 0;
             this.VisibleSlotCount = 0;
-            IEnumerator<int> groupSlots = null;
-            int nextGroupSlot = -1;
+
+            var scp = new SlotCreationParams();
+            scp.totalSlots = totalSlots;
+            scp.nextGroupSlot = -1;
+
             if (this.RowGroupHeadersTable.RangeCount > 0)
             {
-                groupSlots = this.RowGroupHeadersTable.GetIndexes().GetEnumerator();
-                if (groupSlots != null && groupSlots.MoveNext())
+                scp.groupSlots = this.RowGroupHeadersTable.GetIndexes().GetEnumerator();
+                if (scp.groupSlots != null && scp.groupSlots.MoveNext())
                 {
-                    nextGroupSlot = groupSlots.Current;
+                    scp.nextGroupSlot = scp.groupSlots.Current;
                 }
             }
-            int slot = 0;
-            int addedRows = 0;
+
+            scp.chunkSize = ProgressiveLoadingRowChunkSize ?? GlobalProgressiveLoadingChunkSize ?? 0;
+            if (scp.groupSlots != null) // progressive loading for groups is not supported yet
+            {
+                scp.chunkSize = 0;
+            }
+
+            scp.chunkSlots = scp.chunkSize > 0 ? Math.Min(scp.chunkSize, totalSlots) : totalSlots;
+            scp.addedfRows = 0;
+            scp.slot = 0;
+
+            AddSlotsInChunk(ref scp.addedfRows, ref scp.slot, ref scp.nextGroupSlot, scp.chunkSlots, scp.groupSlots);
+
+            if (scp.chunkSlots < scp.totalSlots)
+            {
+                OnProgressiveLoadingInProgressChanged(true);
+            }
+
+            ContinueAddingSlots(scp);
+        }
+
+        private void OnDataGridLoaded(object sender, RoutedEventArgs e)
+        {
+            Loaded -= OnDataGridLoaded;
+
+            if (_pausedSlotCreationParam != null)
+            {
+                var i = _pausedSlotCreationParam;
+                _pausedSlotCreationParam = null;
+                ContinueAddingSlots(i);
+            }
+        }
+
+        private async void ContinueAddingSlots(SlotCreationParams scp)
+        {
+            while (scp.chunkSlots < scp.totalSlots)
+            {
+                await Task.Delay(1);
+
+                // this can happen if the DataGrid is detached during the delay.
+                if (!INTERNAL_VisualTreeManager.IsElementInVisualTree(this))
+                {
+                    _pausedSlotCreationParam = scp;
+                    Loaded += OnDataGridLoaded;
+                    OnProgressiveLoadingInProgressChanged(false);
+                    return;
+                }
+
+                // this can happen while refreshing rows while progressive loading rows
+                if (_pendingRefreshRowsArgs != null && _pendingRefreshRowsArgs.Length == 2)
+                {
+                    OnProgressiveLoadingInProgressChanged(false);
+                    bool recycleRows = _pendingRefreshRowsArgs[0];
+                    bool clearRows = _pendingRefreshRowsArgs[1];
+                    _pendingRefreshRowsArgs = null;
+                    RefreshRows(recycleRows, clearRows);
+                    return;
+                }
+
+                scp.chunkSlots = Math.Min(SlotIsDisplayed(scp.slot) ? scp.chunkSlots + scp.chunkSize : scp.totalSlots, scp.totalSlots);
+                AddSlotsInChunk(ref scp.addedfRows, ref scp.slot, ref scp.nextGroupSlot, scp.chunkSlots, scp.groupSlots);
+            }
+
+            if (_isProgressiveLoadingInProgress)
+            {
+                OnProgressiveLoadingInProgressChanged(false);
+            }
+
+            if (scp.slot < scp.totalSlots)
+            {
+                this.SlotCount += scp.totalSlots - scp.slot;
+                this.VisibleSlotCount += scp.totalSlots - scp.slot;
+                OnAddedElement_Phase2(0, this._vScrollBar == null || this._vScrollBar.Visibility == Visibility.Visible /*updateVerticalScrollBarOnly*/);
+                OnElementsChanged(true /*grew*/);
+            }
+        }
+
+        private void AddSlotsInChunk(ref int addedRows, ref int slot, ref int nextGroupSlot, int totalSlots, IEnumerator<int> groupSlots)
+        {
             while (slot < totalSlots && this.AvailableSlotElementRoom > 0)
             {
                 if (slot == nextGroupSlot)
@@ -874,15 +1010,8 @@ namespace Windows.UI.Xaml.Controls
                     AddSlotElement(slot, GenerateRow(addedRows, slot));
                     addedRows++;
                 }
-                slot++;
-            }
 
-            if (slot < totalSlots)
-            {
-                this.SlotCount += totalSlots - slot;
-                this.VisibleSlotCount += totalSlots - slot;
-                OnAddedElement_Phase2(0, this._vScrollBar == null || this._vScrollBar.Visibility == Visibility.Visible /*updateVerticalScrollBarOnly*/);
-                OnElementsChanged(true /*grew*/);
+                slot++;
             }
         }
 
@@ -1601,6 +1730,13 @@ namespace Windows.UI.Xaml.Controls
             return GenerateRow(rowIndex, slot, this.DataConnection.GetDataItem(rowIndex));
         }
 
+        private static DataGridRow NewDataGridRow(bool keepHiddenOnFirstRender)
+        {
+            var row = new DataGridRow();
+            RuntimeHelpers.UIElement_SetKeepHiddenInFirstRender(row, keepHiddenOnFirstRender);
+            return row;
+        }
+
         /// <summary>
         /// Returns a row for the provided index. The row gets first loaded through the LoadingRow event.
         /// </summary>
@@ -1610,7 +1746,7 @@ namespace Windows.UI.Xaml.Controls
             DataGridRow dataGridRow = GetGeneratedRow(dataContext);
             if (dataGridRow == null)
             {
-                dataGridRow = this.DisplayData.GetUsedRow() ?? new DataGridRow();
+                dataGridRow = this.DisplayData.GetUsedRow() ?? NewDataGridRow(true);
                 dataGridRow.Index = rowIndex;
                 dataGridRow.Slot = slot;
                 dataGridRow.OwningGrid = this;
@@ -3145,5 +3281,25 @@ namespace Windows.UI.Xaml.Controls
             _collapsedSlotsTable.PrintIndexes();
         }
 #endif
+    }
+
+    /// <summary>
+    /// Provides data for the <see cref="DataGrid.ProgressiveLoadingInProgressChanged "/>
+    /// event.
+    /// </summary>
+    public sealed class DataGridProgressiveLoadingInProgressChangedEventArgs : EventArgs
+    {
+        internal DataGridProgressiveLoadingInProgressChangedEventArgs(bool value)
+        {
+            InProgress = value;
+        }
+
+        /// <summary>
+        /// Get the progressive rendering status.
+        /// </summary>
+        /// <returns>
+        /// true if progressive rendering is in progress, false otherwise.
+        /// </returns>
+        public bool InProgress { get; }
     }
 }

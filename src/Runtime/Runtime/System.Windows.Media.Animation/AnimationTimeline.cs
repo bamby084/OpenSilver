@@ -29,6 +29,7 @@ namespace Windows.UI.Xaml.Media.Animation
 {
     public abstract partial class AnimationTimeline : Timeline
     {
+        private List<JavaScriptCallback> _velocityCallbacks;
         internal string _targetName;
         internal PropertyPath _targetProperty;
         internal DependencyObject _propertyContainer;
@@ -46,16 +47,13 @@ namespace Windows.UI.Xaml.Media.Animation
             return new TimeSpan(0, 0, 1);
         }
 
+        internal static bool IsZeroDuration(Duration duration)
+            => duration.HasTimeSpan && duration.TimeSpan == TimeSpan.Zero;
+
         internal override void IterateOnce(IterationParameters parameters, bool isLastLoop)
         {
-            if (!_isInitialized)
-            {
-                Initialize(parameters);
-            }
-            else
-            {
-                RestoreDefault();
-            }
+            Initialize(parameters);
+            
             // This is a workaround to tell the property the effective value should be the animated value.
             SetInitialAnimationValue();
             base.IterateOnce(parameters, isLastLoop);
@@ -77,22 +75,10 @@ namespace Windows.UI.Xaml.Media.Animation
             // Needs to be overriden
         }
 
-        private void RestoreDefault()
-        {
-            _cancelledAnimation = false;
-            RestoreDefaultCore();
-        }
-
-        internal virtual void RestoreDefaultCore()
-        {
-
-        }
-
         internal void Initialize(IterationParameters parameters)
         {
             GetTargetInformation(parameters);
             InitializeCore();
-            ComputeDuration();
             _isInitialized = true;
         }
 
@@ -117,15 +103,34 @@ namespace Windows.UI.Xaml.Media.Animation
                 {
                     UnApply();
                 }
+                ReleaseCallbacks();
             }
         }
 
         internal virtual void StopAnimation() { }
 
+        internal void RegisterCallback(JavaScriptCallback callback)
+        {
+            _velocityCallbacks ??= new List<JavaScriptCallback>();
+            _velocityCallbacks.Add(callback);
+        }
+
+        private void ReleaseCallbacks()
+        {
+            if (_velocityCallbacks != null)
+            {
+                foreach (JavaScriptCallback callback in _velocityCallbacks)
+                {
+                    callback.Dispose();
+                }
+
+                _velocityCallbacks = null;
+            }
+        }
+
         private void UnApply()
         {
             AnimationHelpers.ApplyValue(_propertyContainer, _targetProperty, DependencyProperty.UnsetValue);
-            //_targetProperty.INTERNAL_PropertySetAnimationValue(_propertyContainer, INTERNAL_NoValue.NoValue);
         }
     }
 }

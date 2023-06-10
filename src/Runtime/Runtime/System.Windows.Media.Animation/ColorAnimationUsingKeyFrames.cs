@@ -17,6 +17,8 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Windows.Markup;
+using CSHTML5;
+using System.Linq;
 
 #if MIGRATION
 using System.Windows.Controls;
@@ -102,23 +104,35 @@ namespace Windows.UI.Xaml.Media.Animation
             _appliedKeyFramesCount = 0;
         }
 
-        private Action OnKeyFrameCompleted(IterationParameters parameters, bool isLastLoop, object value, DependencyObject target, PropertyPath propertyPath, Guid callBackGuid)
+        private void OnKeyFrameCompleted(IterationParameters parameters,
+            bool isLastLoop,
+            object value,
+            DependencyObject target,
+            PropertyPath propertyPath,
+            Guid callBackGuid)
         {
-            return () =>
+            if (!_isUnapplied)
             {
-                if (!this._isUnapplied)
+                if (_animationID == callBackGuid)
                 {
-                    if (_animationID == callBackGuid)
+                    AnimationHelpers.ApplyValue(target, propertyPath, value);
+                    _appliedKeyFramesCount++;
+                    if (!CheckTimeLineEndAndRaiseCompletedEvent(_parameters))
                     {
-                        AnimationHelpers.ApplyValue(target, propertyPath, value);
-                        _appliedKeyFramesCount++;
-                        if (!CheckTimeLineEndAndRaiseCompletedEvent(_parameters))
-                        {
-                            ApplyKeyFrame(GetNextKeyFrame(), parameters, isLastLoop);
-                        }
+                        ApplyKeyFrame(GetNextKeyFrame(), parameters, isLastLoop);
                     }
                 }
-            };
+            }
+        }
+
+        private Action GetKeyFrameCompletedCallback(IterationParameters parameters,
+            bool isLastLoop,
+            object value,
+            DependencyObject target,
+            PropertyPath propertyPath,
+            Guid callBackGuid)
+        {
+            return () => OnKeyFrameCompleted(parameters, isLastLoop, value, target, propertyPath, callBackGuid);
         }
 
         private ColorKeyFrame GetNextKeyFrame()
@@ -143,11 +157,16 @@ namespace Windows.UI.Xaml.Media.Animation
         {
             if (!_cancelledAnimation)
             {
-                ColorKeyFrame lastKeyFrame = _keyFrames[_resolvedKeyFrames.GetNextKeyFrameIndex(_keyFrames.Count - 1)];
-                AnimationHelpers.ApplyValue(_propertyContainer, _targetProperty, lastKeyFrame.Value);
+                SetFinalValue();
             }
         }
-        
+
+        private void SetFinalValue()
+            => AnimationHelpers.ApplyValue(
+                _propertyContainer,
+                _targetProperty,
+                _keyFrames[_resolvedKeyFrames.GetNextKeyFrameIndex(_keyFrames.Count - 1)].Value);
+
         private bool CheckTimeLineEndAndRaiseCompletedEvent(IterationParameters parameters)
         {
             bool raiseEvent = false;
@@ -173,12 +192,8 @@ namespace Windows.UI.Xaml.Media.Animation
                 var to = keyFrame.Value;
                 var easingFunction = keyFrame.INTERNAL_GetEasingFunction();
 
-                //Note: we put this line here because the Xaml could use a Color gotten from a StaticResource (which was therefore not converted to a SolidColorbrush by
-                // the compiler in the .g.cs file) and led to a wrong type set in a property (Color value in a property of type Brush).
-                var castedValue = DynamicCast(to, _propDp.PropertyType);
-
                 //we make a specific name for this animation:
-                string specificGroupName = animationInstanceSpecificName.ToString();
+                string specificGroupName = animationInstanceSpecificName;
 
                 bool cssEquivalentExists = false;
                 if (_propertyMetadata.GetCSSEquivalent != null)
@@ -187,8 +202,15 @@ namespace Windows.UI.Xaml.Media.Animation
                     if (cssEquivalent != null)
                     {
                         cssEquivalentExists = true;
-                        StartAnimation(_propertyContainer, cssEquivalent, from, to, GetKeyFrameDuration(keyFrame), easingFunction, specificGroupName, _propDp,
-                                          OnKeyFrameCompleted(parameters, isLastLoop, castedValue, _propertyContainer, _targetProperty, _animationID));
+                        StartAnimation(_propertyContainer,
+                            cssEquivalent,
+                            from,
+                            to,
+                            GetKeyFrameDuration(keyFrame),
+                            easingFunction,
+                            specificGroupName,
+                            _propDp,
+                            GetKeyFrameCompletedCallback(parameters, isLastLoop, to, _propertyContainer, _targetProperty, _animationID));
                     }
                 }
                 if (_propertyMetadata.GetCSSEquivalents != null)
@@ -202,8 +224,15 @@ namespace Windows.UI.Xaml.Media.Animation
                         {
                             if (isFirst)
                             {
-                                bool updateIsFirst = StartAnimation(_propertyContainer, equivalent, from, to, GetKeyFrameDuration(keyFrame), easingFunction, specificGroupName, _propDp,
-                                                                       OnKeyFrameCompleted(parameters, isLastLoop, castedValue, _propertyContainer, _targetProperty, _animationID));
+                                bool updateIsFirst = StartAnimation(_propertyContainer,
+                                    equivalent,
+                                    from,
+                                    to,
+                                    GetKeyFrameDuration(keyFrame),
+                                    easingFunction,
+                                    specificGroupName,
+                                    _propDp,
+                                    GetKeyFrameCompletedCallback(parameters, isLastLoop, to, _propertyContainer, _targetProperty, _animationID));
                                 if (updateIsFirst)
                                 {
                                     isFirst = false;
@@ -211,24 +240,31 @@ namespace Windows.UI.Xaml.Media.Animation
                             }
                             else
                             {
-                                StartAnimation(_propertyContainer, equivalent, from, to, GetKeyFrameDuration(keyFrame), easingFunction, specificGroupName, _propDp,
-                                                  OnKeyFrameCompleted(parameters, isLastLoop, castedValue, _propertyContainer, _targetProperty, _animationID));
+                                StartAnimation(_propertyContainer,
+                                    equivalent,
+                                    from,
+                                    to,
+                                    GetKeyFrameDuration(keyFrame),
+                                    easingFunction,
+                                    specificGroupName,
+                                    _propDp,
+                                    GetKeyFrameCompletedCallback(parameters, isLastLoop, to, _propertyContainer, _targetProperty, _animationID));
                             }
                         }
                         else
                         {
-                            OnKeyFrameCompleted(parameters, isLastLoop, castedValue, _propertyContainer, _targetProperty, _animationID)();
+                            OnKeyFrameCompleted(parameters, isLastLoop, to, _propertyContainer, _targetProperty, _animationID);
                         }
                     }
                 }
                 if (!cssEquivalentExists)
                 {
-                    OnKeyFrameCompleted(parameters, isLastLoop, castedValue, _propertyContainer, _targetProperty, _animationID)();
+                    OnKeyFrameCompleted(parameters, isLastLoop, to, _propertyContainer, _targetProperty, _animationID);
                 }
             }
         }
 
-        static bool StartAnimation(DependencyObject target, CSSEquivalent cssEquivalent, Color? from, object to, Duration duration, EasingFunctionBase easingFunction, string visualStateGroupName, DependencyProperty dependencyProperty, Action callbackForWhenfinished = null)
+        private bool StartAnimation(DependencyObject target, CSSEquivalent cssEquivalent, Color? from, object to, Duration duration, EasingFunctionBase easingFunction, string visualStateGroupName, DependencyProperty dependencyProperty, Action callbackForWhenfinished = null)
         {
             if (cssEquivalent.Name != null && cssEquivalent.Name.Count != 0)
             {
@@ -272,73 +308,57 @@ namespace Windows.UI.Xaml.Media.Animation
                             }; // Default value
                         }
                         object cssValue = cssEquivalent.Value(target, to);
-
-                        //INTERNAL_HtmlDomManager.SetDomElementStyleProperty(cssEquivalent.DomElement, cssEquivalent.Name, cssValue);
-
-
-                        object newObj = CSHTML5.Interop.ExecuteJavaScriptAsync(@"new Object()");
-
-                        if (AnimationHelpers.IsValueNull(from)) //todo: when using Bridge, I guess we would want to directly use "from == null" since it worked in the first place (I think).
+                        string fromToValues;
+                        if (!from.HasValue)
                         {
-                            if (!(cssValue is Dictionary<string, object>))
+                            if (cssValue is Dictionary<string, object> cssValueAsDictionary)
                             {
-                                foreach (string csspropertyName in cssEquivalent.Name)
-                                {
-                                    //todo: check the note below once the clone will work properly (a value set through velocity is not set in c#, which makes the clone take the former value).
-                                    //Note: the test below is to avoid setting Background because Velocity cannot handle it,
-                                    //      which makes the element go transparent (no color) before then changing color with backgroundColor.
-                                    //      Therefore, we no longer go in the animation from the previous color to the new one but from no color to the new one
-                                    if (csspropertyName != "background") //todo: when we will be able to use velocity for linearGradientBrush, we will need another solution here.
-                                    {
-                                        CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0[$1] = $2;", newObj, csspropertyName, cssValue);
-                                    }
-                                }
+                                fromToValues = "{" +
+                                    string.Join(",", cssEquivalent.Name
+                                        .Where(name => name != "background")
+                                        .Select(name => $"\"{name}\":{INTERNAL_InteropImplementation.GetVariableStringForJS(cssValueAsDictionary[name])}")) + "}";
                             }
                             else
                             {
-                                Dictionary<string, object> cssValueAsDictionary = (Dictionary<string, object>)cssValue;
-                                foreach (string csspropertyName in cssEquivalent.Name)
-                                {
-                                    //todo: check the note below once the clone will work properly (a value set through velocity is not set in c#, which makes the clone take the former value).
-                                    //Note: the test below is to avoid setting Background because Velocity cannot handle it,
-                                    //      which makes the element go transparent (no color) before then changing color with backgroundColor.
-                                    //      Therefore, we no longer go in the animation from the previous color to the new one but from no color to the new one
-                                    if (csspropertyName != "background") //todo: when we will be able to use velocity for linearGradientBrush, we will need another solution here.
-                                    {
-                                        CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0[$1] = $2;", newObj, csspropertyName, cssValueAsDictionary[csspropertyName]);
-                                    }
-                                }
+                                string sCssValue = INTERNAL_InteropImplementation.GetVariableStringForJS(cssValue);
+                                fromToValues = "{" +
+                                    string.Join(",", cssEquivalent.Name
+                                        .Where(name => name != "background")
+                                        .Select(name => $"\"{name}\":{sCssValue}")) + "}";
                             }
                         }
                         else
                         {
                             object fromCssValue = cssEquivalent.Value(target, from);
-                            foreach (string csspropertyName in cssEquivalent.Name)
-                            {
-                                //todo: check the note below once the clone will work properly (a value set through velocity is not set in c#, which makes the clone take the former value).
-                                //Note: the test below is to avoid setting Background because Velocity cannot handle it,
-                                //      which makes the element go transparent (no color) before then changing color with backgroundColor.
-                                //      Therefore, we no longer go in the animation from the previous color to the new one but from no color to the new one
-                                if (csspropertyName != "background") //todo: when we will be able to use velocity for linearGradientBrush, we will need another solution here.
-                                {
-                                    object currentCssValue = cssValue;
-                                    if (cssValue is Dictionary<string, object>)
+                            fromToValues = "{" +
+                                string.Join(",", cssEquivalent.Name
+                                    .Where(name => name != "background")
+                                    .Select(name =>
                                     {
-                                        currentCssValue = ((Dictionary<string, object>)cssValue)[csspropertyName];
-                                    }
-                                    object currentFromCssValue = fromCssValue;
-                                    if (fromCssValue is Dictionary<string, object>)
-                                    {
-                                        currentFromCssValue = ((Dictionary<string, object>)fromCssValue)[csspropertyName];
-                                    }
-                                    CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0[$1] = [$2, $3];", newObj, csspropertyName, currentCssValue, currentFromCssValue);
-                                }
-                            }
+                                        object currentCssValue = cssValue is Dictionary<string, object> d1 ? d1[name] : cssValue;
+                                        object currentFromCssValue = fromCssValue is Dictionary<string, object> d2 ? d2[name] : fromCssValue;
+                                        string sCurrentCssValue = INTERNAL_InteropImplementation.GetVariableStringForJS(currentCssValue);
+                                        string sCurrentFromCssValue = INTERNAL_InteropImplementation.GetVariableStringForJS(currentFromCssValue);
+                                        return $"\"{name}\":[{sCurrentCssValue}, {sCurrentFromCssValue}]";
+                                    })) + "}";
                         }
 
-                        AnimationHelpers.CallVelocity(cssEquivalent.DomElement, duration, easingFunction, visualStateGroupName, callbackForWhenfinished, newObj);
+                        AnimationHelpers.CallVelocity(
+                            this,
+                            cssEquivalent.DomElement,
+                            duration,
+                            easingFunction,
+                            visualStateGroupName,
+                            callbackForWhenfinished,
+                            fromToValues);
+                        
                         target.DirtyVisualValue(dependencyProperty);
                         return true;
+                    }
+                    else
+                    {
+                        callbackForWhenfinished?.Invoke();
+                        return false;
                     }
                 }
                 return false;
@@ -352,53 +372,20 @@ namespace Windows.UI.Xaml.Media.Animation
 
         internal override void InitializeCore()
         {
-            this.Completed -= ApplyLastKeyFrame;
-            this.Completed += ApplyLastKeyFrame;
+            Completed -= ApplyLastKeyFrame;
             InitializeKeyFramesSet();
             _propertyMetadata = _propDp.GetTypeMetaData(_propertyContainer.GetType());
+
+            if (!IsZeroDuration(ResolveDuration()))
+            {
+                Completed += ApplyLastKeyFrame;
+            }
         }
 
         internal override void GetTargetInformation(IterationParameters parameters)
         {
             _parameters = parameters;
-            DependencyObject target;
-            PropertyPath propertyPath;
-            DependencyObject targetBeforePath;
-            GetPropertyPathAndTargetBeforePath(parameters, out targetBeforePath, out propertyPath);
-            DependencyObject parentElement = targetBeforePath; //this will be the parent of the clonable element (if any).
-            foreach (Tuple<DependencyObject, DependencyProperty, int?> element in GoThroughElementsToAccessProperty(propertyPath, targetBeforePath))
-            {
-                DependencyObject depObject = element.Item1;
-                DependencyProperty depProp = element.Item2;
-                int? index = element.Item3;
-                if (depObject is ICloneOnAnimation)
-                {
-                    if (!((ICloneOnAnimation)depObject).IsAlreadyAClone())
-                    {
-                        object clone = ((ICloneOnAnimation)depObject).Clone();
-                        if (index != null)
-                        {
-#if BRIDGE
-                            parentElement.GetType().GetProperty("Item").SetValue(parentElement, clone, new object[] { index });
-#else
-                            //JSIL does not support SetValue(object, object, object[])
-#endif
-                        }
-                        else
-                        {
-                            parentElement.SetValue(depProp, clone);
-                        }
-                    }
-                    break;
-                }
-                else
-                {
-                    parentElement = depObject;
-                }
-            }
-
-            GetTargetElementAndPropertyInfo(parameters, out target, out propertyPath);
-
+            GetTargetElementAndPropertyInfo(parameters, out DependencyObject target, out PropertyPath propertyPath);
             _propertyContainer = target;
             _targetProperty = propertyPath;
             _propDp = GetProperty(_propertyContainer, _targetProperty);
@@ -406,11 +393,6 @@ namespace Windows.UI.Xaml.Media.Animation
             _targetName = Storyboard.GetTargetName(this);
         }
         
-        internal override void RestoreDefaultCore()
-        {
-            _appliedKeyFramesCount = 0;
-        }
-
         protected override Duration GetNaturalDurationCore()
         {
             return new Duration(LargestTimeSpanKeyTime);
@@ -418,6 +400,14 @@ namespace Windows.UI.Xaml.Media.Animation
 
         internal override void Apply(IterationParameters parameters, bool isLastLoop)
         {
+            Duration duration = ResolveDuration();
+            if (IsZeroDuration(duration))
+            {
+                SetFinalValue();
+                OnIterationCompleted(parameters);
+                return;
+            }
+
             _animationID = Guid.NewGuid();
             ApplyKeyFrame(GetNextKeyFrame(), _parameters, isLastLoop);
         }
@@ -434,7 +424,7 @@ namespace Windows.UI.Xaml.Media.Animation
                 // - Get the cssPropertyName from the PropertyMetadata
 
                 //we make a specific name for this animation:
-                string specificGroupName = animationInstanceSpecificName.ToString();
+                string specificGroupName = animationInstanceSpecificName;
 
                 bool cssEquivalentExists = false;
                 if (propertyMetadata.GetCSSEquivalent != null)
@@ -455,7 +445,8 @@ namespace Windows.UI.Xaml.Media.Animation
                             if (cssEquivalent.DomElement != null)
                             {
                                 cssEquivalentExists = true;
-                                CSHTML5.Interop.ExecuteJavaScriptAsync(@"Velocity($0, ""stop"", $1);", cssEquivalent.DomElement, specificGroupName);
+                                string sDomElement = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(cssEquivalent.DomElement);
+                                AnimationHelpers.StopVelocity(sDomElement, specificGroupName);
                             }
                         }
                     }
@@ -469,7 +460,8 @@ namespace Windows.UI.Xaml.Media.Animation
                         if (equivalent.DomElement != null && equivalent.CallbackMethod == null)
                         {
                             cssEquivalentExists = true;
-                            CSHTML5.Interop.ExecuteJavaScriptAsync(@"Velocity($0, ""stop"", $1);", equivalent.DomElement, specificGroupName);
+                            string sDomElement = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(equivalent.DomElement);
+                            AnimationHelpers.StopVelocity(sDomElement, specificGroupName);
                         }
                     }
                 }

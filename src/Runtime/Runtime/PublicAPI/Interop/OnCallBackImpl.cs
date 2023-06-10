@@ -11,24 +11,15 @@
 *  
 \*====================================================================================*/
 
-using DotNetForHtml5.Core;
-using CSHTML5.Types;
 using System;
-
-#if BRIDGE
-using Bridge;
-using DotNetBrowser;
-#endif
-
-#if OPENSILVER
-#endif
+using System.Collections.Generic;
+using System.Linq;
+using CSHTML5.Types;
+using DotNetForHtml5.Core;
 
 namespace CSHTML5.Internal
 {
-#if BRIDGE
-    [External] //we exclude this class
-#endif
-    internal class OnCallBackImpl
+    internal sealed class OnCallBackImpl
     {
         private OnCallBackImpl()
         {
@@ -40,9 +31,9 @@ namespace CSHTML5.Internal
         {
             Action action = () =>
             {
-                string errorMessage = Convert.ToString(OpenSilver.Interop.ExecuteJavaScript("document.jsObjRef[$0][0]", idWhereCallbackArgsAreStored));
-                int indexOfNextUnmodifiedJSCallInList = Convert.ToInt32(OpenSilver.Interop.ExecuteJavaScript("document.jsObjRef[$0][1]", idWhereCallbackArgsAreStored));
-                INTERNAL_InteropImplementation.ShowErrorMessage(errorMessage, indexOfNextUnmodifiedJSCallInList);
+                string errorMessage = OpenSilver.Interop.ExecuteJavaScriptString($"document.jsObjRef['{idWhereCallbackArgsAreStored}'][0]");
+                int indexOfNextUnmodifiedJSCallInList = OpenSilver.Interop.ExecuteJavaScriptInt32($"document.jsObjRef['{idWhereCallbackArgsAreStored}'][1]");
+                INTERNAL_ExecuteJavaScript.ShowErrorMessage(errorMessage, indexOfNextUnmodifiedJSCallInList);
             };
 
             if (OpenSilver.Interop.IsRunningInTheSimulator)
@@ -56,26 +47,61 @@ namespace CSHTML5.Internal
             }
         }
 
-        private static object DelegateDynamicInvoke(Delegate d, params object[] args)
+        //---------------------------------------------------------------------------------------
+        // This code follows the architecture drawn by DotNetBrowser
+        // (cf https://dotnetbrowser.support.teamdev.com/support/solutions/articles/9000109868-calling-javascript-from-net)
+        // For an example of implementation, go to INTERNAL_InteropImplementation.cs and
+        // ExecuteJavaScript_Implementation method, in the first "if".
+        //---------------------------------------------------------------------------------------
+
+        public object OnCallbackFromJavaScript<T>(
+            int callbackId,
+            string idWhereCallbackArgsAreStored,
+            T callbackArgsObject)
         {
-#if OPENSILVER
-            return d.DynamicInvoke(args);
-#elif BRIDGE
-            return INTERNAL_Simulator.SimulatorProxy.DelegateDynamicInvoke(d, args);
-#endif
+            return CallMethod(callbackId, idWhereCallbackArgsAreStored, callbackArgsObject);
         }
 
-        private object CallMethod<T>(int callbackId, string idWhereCallbackArgsAreStored, Func<int, int, string, T, Type[], object[]> makeArguments,
-            T callbackArgs)
+        private static object DelegateDynamicInvoke(Delegate d, params object[] args)
+        {
+            return d.DynamicInvoke(args);
+        }
+
+        private bool TryOptimizationForCommonTypes(Delegate callback, out object result)
+        {
+            switch (callback)
+            {
+                case Action action:
+                    action();
+                    result = null;
+                    return true;
+
+                case Func<object> func:
+                    result = func();
+                    return true;
+
+                default:
+                    result = null;
+                    return false;
+            }
+        }
+
+        private object CallMethod<T>(int callbackId, string idWhereCallbackArgsAreStored, T callbackArgs)
         {
             //----------------------------------
             // Get the C# callback from its ID:
             //----------------------------------
-            var callback = JavascriptCallback.Get(callbackId)?.GetCallback();
-
-            if (callback == null)
+            JavaScriptCallback jsCallback = JavaScriptCallback.Get(callbackId);
+            if (jsCallback == null)
             {
                 return null;
+            }
+
+            Delegate callback = jsCallback.GetCallback();
+
+            if (TryOptimizationForCommonTypes(callback, out object simpleResult))
+            {
+                return simpleResult;
             }
 
             Type callbackType = callback.GetType();
@@ -86,237 +112,79 @@ namespace CSHTML5.Internal
                 callbackType = callbackType.GetGenericTypeDefinition();
             }
 
-            if (callbackType == typeof(Action) || callbackType == typeof(Func<>))
+            object[] arguments = null;
+            IReadOnlyList<object> extraJsObjects = null;
+            try
             {
-                return DelegateDynamicInvoke(callback);
+                int argumentCount = 0;
+                if (callbackType == typeof(Action<>) || callbackType == typeof(Func<,>))
+                    argumentCount = 1;
+                else if (callbackType == typeof(Action<,>) || callbackType == typeof(Func<,,>))
+                    argumentCount = 2;
+                else if (callbackType == typeof(Action<,,>) || callbackType == typeof(Func<,,,>))
+                    argumentCount = 3;
+                else if (callbackType == typeof(Action<,,,>) || callbackType == typeof(Func<,,,,>))
+                    argumentCount = 4;
+                else if (callbackType == typeof(Action<,,,,>) || callbackType == typeof(Func<,,,,,>))
+                    argumentCount = 5;
+                else if (callbackType == typeof(Action<,,,,,>) || callbackType == typeof(Func<,,,,,,>))
+                    argumentCount = 6;
+                else if (callbackType == typeof(Action<,,,,,,>) || callbackType == typeof(Func<,,,,,,,>))
+                    argumentCount = 7;
+                else if (callbackType == typeof(Action<,,,,,,,>) || callbackType == typeof(Func<,,,,,,,,>))
+                    argumentCount = 8;
+                else if (callbackType == typeof(Action<,,,,,,,,>) || callbackType == typeof(Func<,,,,,,,,,>))
+                    argumentCount = 9;
+
+                (arguments, extraJsObjects) = MakeArgumentsForCallback(argumentCount, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs);
+                return DelegateDynamicInvoke(callback, arguments);
             }
-            if (callbackType == typeof(Action<>) || callbackType == typeof(Func<,>))
+            finally
             {
-                return DelegateDynamicInvoke(callback,
-                    makeArguments(1, callbackId, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs));
-            }
-            if (callbackType == typeof(Action<,>) || callbackType == typeof(Func<,,>))
-            {
-                return DelegateDynamicInvoke(callback,
-                    makeArguments(2, callbackId, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs));
-            }
-            if (callbackType == typeof(Action<,,>) || callbackType == typeof(Func<,,,>))
-            {
-                return DelegateDynamicInvoke(callback,
-                    makeArguments(3, callbackId, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs));
-            }
-            if (callbackType == typeof(Action<,,,>) || callbackType == typeof(Func<,,,,>))
-            {
-                return DelegateDynamicInvoke(callback,
-                    makeArguments(4, callbackId, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs));
-            }
-            if (callbackType == typeof(Action<,,,,>) || callbackType == typeof(Func<,,,,,>))
-            {
-                return DelegateDynamicInvoke(callback,
-                    makeArguments(5, callbackId, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs));
-            }
-            if (callbackType == typeof(Action<,,,,,>) || callbackType == typeof(Func<,,,,,,>))
-            {
-                return DelegateDynamicInvoke(callback,
-                    makeArguments(6, callbackId, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs));
-            }
-            if (callbackType == typeof(Action<,,,,,,>) || callbackType == typeof(Func<,,,,,,,>))
-            {
-                return DelegateDynamicInvoke(callback,
-                    makeArguments(7, callbackId, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs));
-            }
-            if (callbackType == typeof(Action<,,,,,,,>) || callbackType == typeof(Func<,,,,,,,,>))
-            {
-                return DelegateDynamicInvoke(callback,
-                    makeArguments(8, callbackId, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs));
-            }
-            if (callbackType == typeof(Action<,,,,,,,,>) || callbackType == typeof(Func<,,,,,,,,,>))
-            {
-                return DelegateDynamicInvoke(callback,
-                    makeArguments(9, callbackId, idWhereCallbackArgsAreStored, callbackArgs, callbackGenericArgs));
+                if (arguments != null)
+                    foreach (var arg in arguments.OfType<IDisposable>())
+                        arg.Dispose();
+                if (extraJsObjects != null)
+                    foreach (var arg in extraJsObjects.OfType<IDisposable>())
+                        arg.Dispose();
             }
 
-            throw new Exception(string.Format(
-                "Callback type not supported: {0}  Please report this issue to support@cshtml5.com",
-                callbackType.ToString()));
+            throw new Exception($"Callback type not supported: '{callbackType.FullName}'");
         }
 
-        private static ApplicationException GenerateDeadlockException(TimeSpan timeout)
-        {
-            return new ApplicationException(
-                $"The callback method has not finished execution in {timeout} seconds.\n" +
-                "This method was called in a sync way, and very likely, the process is deadlocked. It happens when the code from the UI thread calls JS code, which calls C# back synchronously.\n" +
-                "The Example:\n" +
-                "OpenSilver.Interop.ExecuteJavaScript(\"$0();\", (Func<string>)(() => \"Message from C#\"));\n" +
-                "The solution:\n" +
-                "If a callback returns a value(for example, a Func), verify that this callback is not invoked from the C# code in the UI thread.");
-        }
-
-        //---------------------------------------------------------------------------------------
-        // This code follows the architecture drawn by DotNetBrowser
-        // (cf https://dotnetbrowser.support.teamdev.com/support/solutions/articles/9000109868-calling-javascript-from-net)
-        // For an example of implementation, go to INTERNAL_InteropImplementation.cs and
-        // ExecuteJavaScript_SimulatorImplementation method, in the first "if".
-        //---------------------------------------------------------------------------------------
-
-#if OPENSILVER
-        public object OnCallbackFromJavaScript<T>(
-            int callbackId,
-            string idWhereCallbackArgsAreStored,
-            T callbackArgsObject,
-            Func<int, int, string, T, Type[], object[]> makeArguments,
-            bool isInSimulator,
-            bool returnValue)
-        {
-            object result = null;
-            var actionExecuted = false;
-            Action action = () =>
-            {
-                INTERNAL_SimulatorExecuteJavaScript.RunActionThenExecutePendingAsyncJSCodeExecutedDuringThatAction(
-                    () =>
-                    {
-                        //--------------------
-                        // Call the callback:
-                        //--------------------
-                        try
-                        {
-                            result = CallMethod(callbackId, idWhereCallbackArgsAreStored, makeArguments, callbackArgsObject);
-                            actionExecuted = true;
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.Error.WriteLine("DEBUG: OnCallBack: OnCallBackFromJavascript: " + ex);
-//#if DEBUG
-//                            Console.Error.WriteLine("DEBUG: OnCallBack: OnCallBackFromJavascript: " + ex);
-//#endif
-//                            throw;
-                        }
-                    });
-            };
-            if (isInSimulator)
-            {
-                // Go back to the UI thread because DotNetBrowser calls the callback from the socket background thread:
-                if (returnValue)
-                {
-                    var timeout = TimeSpan.FromSeconds(30);
-                    INTERNAL_Simulator.WebControlDispatcherInvoke(action, timeout);
-                    if (!actionExecuted)
-                    {
-                        throw GenerateDeadlockException(timeout);
-                    }
-                }
-                else
-                {
-                    INTERNAL_Simulator.WebControlDispatcherBeginInvoke(action);
-                }
-            }
-            else
-            {
-                action();
-            }
-
-            return returnValue ? result : null;
-        }
-
-#elif BRIDGE
-
-        public object OnCallbackFromJavaScript(
-            int callbackId,
-            string idWhereCallbackArgsAreStored,
-            JSArray callbackArgsObject,
-            bool returnValue)
-        {
-            object result = null;
-            var actionExecuted = false;
-            Action action = () =>
-            {
-                //--------------------
-                // Call the callback:
-                //--------------------
-                try
-                {
-                    result = CallMethod(callbackId, idWhereCallbackArgsAreStored, MakeArgumentsForCallback, callbackArgsObject);
-                    actionExecuted = true;
-                }
-                catch (global::System.Reflection.TargetInvocationException ex)
-                {
-                    if (global::System.Diagnostics.Debugger.IsAttached)
-                    {
-                        if (ex.InnerException != null)
-                        {
-                            // We rethrow the inner exception if any, that is, the exception that happens in the C# code being called by "DynamicInvoke". cf. https://stackoverflow.com/questions/57383/in-c-how-can-i-rethrow-innerexception-without-losing-stack-trace
-                            INTERNAL_Simulator.SimulatorProxy.ThrowExceptionWithoutLosingStackTrace(ex.InnerException);
-                        }
-                        else
-                        {
-                            throw;
-                        }
-                    }
-                    else
-                    {
-                        INTERNAL_Simulator.SimulatorProxy.ShowException(ex.InnerException ?? ex);
-                    }
-                }
-            };
-
-            if (Interop.IsRunningInTheSimulator)
-            {
-                // Go back to the UI thread because DotNetBrowser calls the callback from the socket background thread:
-                if (returnValue)
-                {
-                    var timeout = TimeSpan.FromSeconds(30);
-                    INTERNAL_Simulator.WebControlDispatcherInvoke(action, timeout);
-                    if (!actionExecuted)
-                    {
-                        throw GenerateDeadlockException(timeout);
-                    }
-                }
-                else
-                {
-                    INTERNAL_Simulator.WebControlDispatcherBeginInvoke(action);
-                }
-            }
-            else
-            {
-                action();
-            }
-
-            return result;
-        }
-
-        private static object[] MakeArgumentsForCallback(
+        private static (object[], IReadOnlyList<object>) MakeArgumentsForCallback(
             int count,
-            int callbackId,
             string idWhereCallbackArgsAreStored,
-            JSArray callbackArgs,
-            Type[] callbackGenericArgs
-            )
+            object callbackArgs,
+            Type[] callbackGenericArgs)
         {
             var result = new object[count];
+            List<object> extraJsObjects = null;
 
             for (int i = 0; i < count; i++)
             {
-                var arg = new INTERNAL_JSObjectReference(callbackArgs, idWhereCallbackArgsAreStored, i);
+                var arg = new INTERNAL_JSObjectReference(callbackArgs, idWhereCallbackArgsAreStored, i, $"callback {idWhereCallbackArgsAreStored}");
+
                 if (callbackGenericArgs != null
                     && i < callbackGenericArgs.Length
                     && callbackGenericArgs[i] != typeof(object)
-                    && ((bool)INTERNAL_Simulator.SimulatorProxy.TypeIsPrimitive(callbackGenericArgs[i])
-                        || callbackGenericArgs[i] == typeof(string)))
+                    && (callbackGenericArgs[i].IsPrimitive || callbackGenericArgs[i] == typeof(string)))
                 {
-                    // Attempt to cast from JS object to the desired primitive or string type.
-                    // This is useful for example when passing an Action<string> to an
-                    // Interop.ExecuteJavaScript so as to not get an exception that says that
-                    // it cannot cast the JS object into string (when running in the Simulator
-                    // only)
-                    result[i] = INTERNAL_Simulator.SimulatorProxy.ConvertChangeType(arg, callbackGenericArgs[i]);
+                    // Attempt to cast from JS object to the desired primitive or string type. This is useful for example
+                    // when passing an Action<string> to an Interop.ExecuteJavaScript so as to not get an exception that says
+                    // that it cannot cast the JS object into string (when running in the Simulator only):
+                    result[i] = Convert.ChangeType(arg, callbackGenericArgs[i]);
+                    // this may leak the JSobjectReference?
+                    if (extraJsObjects == null)
+                        extraJsObjects = new List<object>();
+                    extraJsObjects.Add(arg);
                 }
                 else
                 {
                     result[i] = arg;
                 }
             }
-            return result;
+            return (result, extraJsObjects);
         }
-#endif
     }
 }

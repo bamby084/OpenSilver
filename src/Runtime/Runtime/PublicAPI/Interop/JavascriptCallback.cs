@@ -11,68 +11,62 @@
 *
 \*====================================================================================*/
 
-
 using System;
+using System.Diagnostics;
+using OpenSilver.Internal;
 
 namespace CSHTML5.Internal
 {
-    internal class JavascriptCallback : IDisposable
+    internal sealed class JavaScriptCallback : IJavaScriptConvertible, IDisposable
     {
-        private static readonly SynchronyzedStore<JavascriptCallback> _store = new SynchronyzedStore<JavascriptCallback>();
+        private static readonly SynchronyzedStore<JavaScriptCallback> _store = new();
 
-        public int Id { get; private set; }
+        private readonly int _id;
+        private readonly bool _sync;
+        private readonly Delegate _callback;
 
-        public Delegate Callback { get; private set; }
-
-        public WeakReference<Delegate> CallbackWeakReference { get; private set; }
-
-        public static JavascriptCallback Create(Delegate callback)
+        private JavaScriptCallback(Delegate callback, bool sync)
         {
-            var jc = new JavascriptCallback
-            {
-                Callback = callback
-            };
-            jc.Id = _store.Add(jc);
-
-            return jc;
+            Debug.Assert(callback != null);
+            _callback = callback;
+            _sync = sync;
+            _id = _store.Add(this);
         }
 
-        public static JavascriptCallback CreateWeak(Delegate callback)
+        public static JavaScriptCallback Create(Delegate callback, bool sync)
         {
-            var jc = new JavascriptCallback
+            if (callback is null)
             {
-                CallbackWeakReference = new WeakReference<Delegate>(callback)
-            };
-            jc.Id = _store.Add(jc);
-
-            return jc;
-        }
-
-        public static JavascriptCallback Get(int index)
-        {
-            return _store.Get(index);
-        }
-
-        public Delegate GetCallback()
-        {
-            if (Callback != null)
-            {
-                return Callback;
+                throw new ArgumentNullException(nameof(callback));
             }
 
-            if (CallbackWeakReference.TryGetTarget(out var callback))
-            {
-                return callback;
-            }
-
-            _store.Clean(Id);
-
-            return null;
+            return new JavaScriptCallback(callback, sync);
         }
 
-        public void Dispose()
+        public static JavaScriptCallback Get(int index) => _store.Get(index);
+
+        public Delegate GetCallback() => _callback;
+
+        public void Dispose() => _store.Clean(_id);
+
+        public override string ToString() => ToJavaScriptStringImpl();
+
+        private string ToJavaScriptStringImpl()
+            => $"document.getCallbackFunc({_id}, {GetSyncString()}, {(!OpenSilver.Interop.IsRunningInTheSimulator).ToString().ToLower()})";
+
+        string IJavaScriptConvertible.ToJavaScriptString() => ToJavaScriptStringImpl();
+
+        private string GetSyncString()
         {
-            _store.Clean(Id);
+            const string TrueString = "true";
+            const string FalseString = "false";
+
+            if (!_sync || OpenSilver.Interop.IsRunningInTheSimulator)
+            {
+                return FalseString;
+            }
+
+            return TrueString;
         }
     }
 }

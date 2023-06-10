@@ -13,20 +13,19 @@
 
 using System;
 using System.Collections;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Windows.Input;
 using System.Windows.Markup;
+using System.ComponentModel;
+using System.Xaml.Markup;
 using CSHTML5.Internal;
 using OpenSilver.Internal;
-using System.ComponentModel;
 
 #if MIGRATION
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
-using System.Windows.Controls.Primitives;
 #else
 using Windows.Foundation;
 using Windows.UI.Xaml.Controls;
@@ -50,14 +49,12 @@ namespace Windows.UI.Xaml
     {
         #region Inheritance Context
 
-        internal static FrameworkElement FindMentor(DependencyObject d)
+        internal static IInternalFrameworkElement FindMentor(DependencyObject d)
         {
             // Find the nearest FE InheritanceContext
             while (d != null)
             {
-                FrameworkElement fe = d as FrameworkElement;
-
-                if (fe != null)
+                if (d is IInternalFrameworkElement fe)
                 {
                     return fe;
                 }
@@ -75,12 +72,12 @@ namespace Windows.UI.Xaml
             return base.ShouldProvideInheritanceContext(target, property) || property == ResourceDictionary.ResourceKeyProperty;
         }
 
-        internal FrameworkElement InheritedParent { get; private set; }
+        internal IInternalFrameworkElement InheritedParent { get; private set; }
 
         internal override void OnInheritanceContextChangedCore(EventArgs args)
         {
-            FrameworkElement oldMentor = InheritedParent;
-            FrameworkElement newMentor = FindMentor(InheritanceContext);
+            IInternalFrameworkElement oldMentor = InheritedParent;
+            IInternalFrameworkElement newMentor = FindMentor(InheritanceContext);
 
             if (oldMentor != newMentor)
             {
@@ -98,18 +95,18 @@ namespace Windows.UI.Xaml
             }
         }
 
-        private void ConnectMentor(FrameworkElement mentor)
+        private void ConnectMentor(IInternalFrameworkElement mentor)
         {
             mentor.InheritedPropertyChanged += new InheritedPropertyChangedEventHandler(OnMentorInheritedPropertyChanged);
             
-            InvalidateInheritedProperties(this, mentor);
+            InvalidateInheritedProperties(this, mentor.AsDependencyObject());
         }
 
-        private void DisconnectMentor(FrameworkElement mentor)
+        private void DisconnectMentor(IInternalFrameworkElement mentor)
         {
             mentor.InheritedPropertyChanged -= new InheritedPropertyChangedEventHandler(OnMentorInheritedPropertyChanged);
 
-            InvalidateInheritedProperties(this, mentor);
+            InvalidateInheritedProperties(this, mentor.AsDependencyObject());
         }
 
         // handle the InheritedPropertyChanged event from the mentor
@@ -205,8 +202,7 @@ namespace Windows.UI.Xaml
 
                 HasLogicalChildren = true;
 
-                FrameworkElement fe = child as FrameworkElement;
-                if (fe != null)
+                if (child is IInternalFrameworkElement fe)
                 {
                     fe.ChangeLogicalParent(this);
                 }
@@ -224,7 +220,7 @@ namespace Windows.UI.Xaml
                     throw new InvalidOperationException("Cannot modify the logical children for this node at this time because a tree walk is in progress.");
                 }
 
-                if (child is FrameworkElement fe && fe.Parent == this)
+                if (child is IInternalFrameworkElement fe && fe.Parent == this)
                 {
                     fe.ChangeLogicalParent(null);
                 }
@@ -279,12 +275,14 @@ namespace Windows.UI.Xaml
             }
             else
             {
-                INTERNAL_PropertyStorage[] storages = newParent.INTERNAL_AllInheritedProperties.Values.ToArray();
-                foreach (var storage in storages)
+                foreach (var kvp in newParent.INTERNAL_AllInheritedProperties.ToArray())
                 {
-                    uie.SetInheritedValue(storage.Property,
-                                          INTERNAL_PropertyStore.GetEffectiveValue(storage.Entry),
-                                          true);
+                    DependencyProperty dp = kvp.Key;
+                    INTERNAL_PropertyStorage storage = kvp.Value;
+
+                    uie.SetInheritedValue(dp,
+                        INTERNAL_PropertyStore.GetEffectiveValue(storage.Entry),
+                        true);
                 }
             }
         }
@@ -311,7 +309,25 @@ namespace Windows.UI.Xaml
 
         #endregion Logical Parent
 
-        internal DependencyObject TemplatedParent { get; set; }
+        private WeakReference<DependencyObject> _templatedParentRef;
+
+        internal DependencyObject TemplatedParent
+        {
+            get
+            {
+                if (_templatedParentRef?.TryGetTarget(out DependencyObject templatedParent) ?? false)
+                {
+                    return templatedParent;
+                }
+
+                return null;
+            }
+            set
+            {
+                Debug.Assert(_templatedParentRef is null);
+                _templatedParentRef = new WeakReference<DependencyObject>(value);
+            }
+        }
 
         private FrameworkElement _templateChild; // Non-null if this FE has a child that was created as part of a template.
 
@@ -337,28 +353,13 @@ namespace Windows.UI.Xaml
         /// </summary>
         internal virtual FrameworkElement StateGroupsRoot => TemplateChild;
 
-        //--------------------------------------
-        // Note: this is a "partial" class. For anything related to Size and Alignment, please refer to the other file ("FrameworkElement_HandlingSizeAndAlignment.cs").
-        //--------------------------------------
-
-        // Note: this is used to be able to tell whether the style applied on 
-        // the FrameworkElement is an ImplicitStyle, which means that it must 
-        // be removed from the element when it is detached from the visual tree.
-        //internal bool INTERNAL_IsImplicitStyle = false;
-
-        // Note: this is used by the PopupRoot to ensure that the PopupRoot 
-        // has no pointer events while the container has. 
-        // todo: replace with another technique to achieve the same result.
-        internal bool INTERNAL_ForceEnableAllPointerEvents = false;
-
-        [Obsolete]
-        internal Style INTERNAL_defaultStyle;
-
         private ResourceDictionary _resources;
 
         /// <summary>
         /// Derived classes can set this flag in their constructor to prevent the "Style" property from being applied.
         /// </summary>
+        [Obsolete(Helper.ObsoleteMemberMessage)]
+        [EditorBrowsable(EditorBrowsableState.Never)]
         protected bool INTERNAL_DoNotApplyStyle = false;
 
         /// <summary>
@@ -405,6 +406,7 @@ namespace Windows.UI.Xaml
         /// resource items as child object elements of a frameworkElement.Resources property
         /// element, through XAML implicit collection syntax.
         /// </summary>
+        [Ambient]
         public ResourceDictionary Resources
         {
             get
@@ -487,9 +489,9 @@ namespace Windows.UI.Xaml
 
             object div1;
             var div1style = INTERNAL_HtmlDomManager.CreateDomElementAppendItAndGetStyle("div", parentRef, this, out div1);
-            if (!this.IsUnderCustomLayout || INTERNAL_ForceEnableAllPointerEvents)
+            if (!this.IsUnderCustomLayout)
             {
-                object div2 = INTERNAL_HtmlDomManager.CreateFrameworkDomElementAndAppendIt(div1, this, INTERNAL_ForceEnableAllPointerEvents);
+                object div2 = INTERNAL_HtmlDomManager.CreateFrameworkDomElementAndAppendIt(div1, this, false);
                 domElementWhereToPlaceChildren = div2;
 
                 if (this.IsCustomLayoutRoot)
@@ -519,17 +521,8 @@ namespace Windows.UI.Xaml
             var div2style = INTERNAL_HtmlDomManager.CreateDomElementAppendItAndGetStyle("div", div1, this, out div2);
             div2style.width = "100%";
             div2style.height = "100%";
-            if (INTERNAL_ForceEnableAllPointerEvents)
-                div2style.pointerEvents = "all";
             domElementWhereToPlaceChildren = div2;
             return div1;
-        }
-#if BRIDGE
-        [Bridge.Template("true")]
-#endif
-        static bool IsRunningInJavaScript()
-        {
-            return false;
         }
 
         // Internal helper so the FrameworkElement could see the
@@ -600,46 +593,6 @@ namespace Windows.UI.Xaml
 #endif
         {
             
-        }
-
-        internal virtual bool CheckIsAutoWidth(FrameworkElement child)
-        {
-            if (!double.IsNaN(child.Width))
-            {
-                return false;
-            }
-
-            if (child.HorizontalAlignment != HorizontalAlignment.Stretch)
-            {
-                return true;
-            }
-
-            if (VisualTreeHelper.GetParent(child) is FrameworkElement parent)
-            {
-                return parent.CheckIsAutoWidth(this);
-            }
-
-            return false;
-        }
-
-        internal virtual bool CheckIsAutoHeight(FrameworkElement child)
-        {
-            if (!double.IsNaN(child.Height))
-            {
-                return false;
-            }
-
-            if (child.VerticalAlignment != VerticalAlignment.Stretch)
-            {
-                return true;
-            }
-
-            if (VisualTreeHelper.GetParent(child) is FrameworkElement parent)
-            {
-                return parent.CheckIsAutoHeight(this);
-            }
-
-            return false;
         }
 
         // Note: the returned Size is unused for now.
@@ -839,52 +792,25 @@ namespace Windows.UI.Xaml
         {
             var element = (FrameworkElement)d;
             SetPointerEvents(element);
-            element.ManageIsEnabled(newValue != null ? (bool)newValue : true);
+            element.ManageIsEnabled((bool)newValue);
         }
 
-        internal protected virtual void ManageIsEnabled(bool isEnabled)
+        protected internal virtual void ManageIsEnabled(bool isEnabled)
         {
             if (INTERNAL_VisualTreeManager.IsElementInVisualTree(this))
             {
-                var domElementToEnableOrDisable = (INTERNAL_OptionalSpecifyDomElementConcernedByIsEnabled != null ? INTERNAL_OptionalSpecifyDomElementConcernedByIsEnabled : INTERNAL_OuterDomElement);
                 if (isEnabled)
                 {
-                    INTERNAL_HtmlDomManager.RemoveDomElementAttribute(domElementToEnableOrDisable, "disabled", forceSimulatorExecuteImmediately: true);
+                    INTERNAL_HtmlDomManager.RemoveDomElementAttribute(INTERNAL_OuterDomElement, "disabled", forceSimulatorExecuteImmediately: true);
                 }
                 else
                 {
-                    INTERNAL_HtmlDomManager.SetDomElementAttribute(domElementToEnableOrDisable, "disabled", true, forceSimulatorExecuteImmediately: true);
+                    INTERNAL_HtmlDomManager.SetDomElementAttribute(INTERNAL_OuterDomElement, "disabled", "true");
                 }
             }
         }
 
         #endregion
-
-        #region ForceInherit property support
-
-        internal override void InvalidateForceInheritPropertyOnChildren(DependencyProperty property)
-        {
-            if (property == IsEnabledProperty)
-            {
-                IEnumerator enumerator = LogicalChildren;
-
-                if (enumerator != null)
-                {
-                    while (enumerator.MoveNext())
-                    {
-                        DependencyObject child = enumerator.Current as DependencyObject;
-                        if (child != null)
-                        {
-                            child.CoerceValue(property);
-                        }
-                    }
-                }
-            }
-
-            base.InvalidateForceInheritPropertyOnChildren(property);
-        }
-
-        #endregion ForceInherit property support
 
         #region Names handling
 
@@ -995,19 +921,23 @@ namespace Windows.UI.Xaml
         /// Identifies the <see cref="Name"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty NameProperty =
-            DependencyProperty.Register(
-                nameof(Name), 
-                typeof(string), 
-                typeof(FrameworkElement), 
-                new PropertyMetadata(string.Empty)
+            DependencyProperty.RegisterAttached(
+                nameof(Name),
+                typeof(string),
+                typeof(FrameworkElement),
+                new PropertyMetadata(string.Empty, null, OnCoerceName)
                 {
                     MethodToUpdateDom = OnNameChanged_MethodToUpdateDom,
                 });
 
+        private static object OnCoerceName(DependencyObject d, object baseValue) => baseValue ?? string.Empty;
+
         private static void OnNameChanged_MethodToUpdateDom(DependencyObject d, object value)
         {
-            var fe = (FrameworkElement)d;
-            INTERNAL_HtmlDomManager.SetDomElementAttribute(fe.INTERNAL_OuterDomElement, "dataId", (value ?? string.Empty).ToString());
+            if (d is FrameworkElement fe)
+            {
+                INTERNAL_HtmlDomManager.SetDomElementAttribute(fe.INTERNAL_OuterDomElement, "dataId", (value ?? string.Empty).ToString());
+            }
         }
 
 #endregion
@@ -1089,13 +1019,6 @@ namespace Windows.UI.Xaml
                 null);
 
         #endregion Triggers
-
-        public event EventHandler LayoutUpdated;
-
-        protected override void OnLayoutUpdated()
-        {
-            LayoutUpdated?.Invoke(this, new EventArgs());
-        }
 
         #region Work in progress
 
@@ -1195,174 +1118,6 @@ namespace Windows.UI.Xaml
                 }
             }
         }
-        internal sealed override void ArrangeCore(Rect finalRect)
-        {
-            bool isDefaultAlignment = HorizontalAlignment == HorizontalAlignment.Stretch && VerticalAlignment == VerticalAlignment.Stretch;
-            Size finalSize = isDefaultAlignment ? finalRect.Size : new Size(
-                HorizontalAlignment != HorizontalAlignment.Stretch ? Math.Min(DesiredSize.Width, finalRect.Width) : finalRect.Width,
-                VerticalAlignment != VerticalAlignment.Stretch ? Math.Min(DesiredSize.Height, finalRect.Height) : finalRect.Height);
-
-            if (!this.IsCustomLayoutRoot)
-            {
-                finalSize.Width = Math.Max(0, finalSize.Width - Margin.Left - Margin.Right);
-                finalSize.Height = Math.Max(0, finalSize.Height - Margin.Top - Margin.Bottom);
-            }
-
-            Size MinSize = new Size(MinWidth, MinHeight);
-            Size MaxSize = new Size(MaxWidth, MaxHeight);
-            Size size = new Size(Width, Height);
-
-            finalSize = size.Combine(finalSize).Bounds(MinSize, MaxSize);
-
-            Size arrangedSize = ArrangeOverride(finalSize);
-
-            double w = Math.Max(0, Math.Min(finalSize.Width, arrangedSize.Width));
-            double h = Math.Max(0, Math.Min(finalSize.Height, arrangedSize.Height));
-            arrangedSize = new Size(w, h);
-
-            arrangedSize = size.Combine(arrangedSize).Bounds(MinSize, MaxSize);
-
-            Rect containingRect = new Rect(arrangedSize);
-
-            // Add Margin
-            if (!this.IsCustomLayoutRoot)
-            {
-                double newLeft = containingRect.Left - Margin.Left;
-                double newTop = containingRect.Top - Margin.Top;
-                double newWidth = containingRect.Width + Margin.Left + Margin.Right;
-                double newHeight = containingRect.Height + Margin.Top + Margin.Bottom;
-
-                if (newWidth >= 0 && newHeight >= 0)
-                    containingRect = new Rect(newLeft, newTop, newWidth, newHeight);
-                else
-                    throw new ArgumentException("Width or Height cannot be lower than 0");
-            }
-
-            Point alignedOffset = GetAlignmentOffset(finalRect, containingRect.Size, HorizontalAlignment, VerticalAlignment);
-
-            Point visualOffset = new Point(alignedOffset.X - containingRect.Location.X, alignedOffset.Y - containingRect.Location.Y);
-
-            VisualBounds = new Rect(visualOffset, arrangedSize);
-
-            // Call SizeChanged event handlers
-            if (!this.IsCustomLayoutRoot)
-                this.HandleSizeChanged(new Size(VisualBounds.Width, VisualBounds.Height));
-
-            if (isFirstRendering)
-            {
-                isFirstRendering = false;
-                INTERNAL_HtmlDomManager.GetDomElementStyleForModification(this.INTERNAL_OuterDomElement).visibility = "visible";
-            }
-        }
-
-        private static Point GetAlignmentOffset(Rect container, Size alignedRectSize, HorizontalAlignment horizontalAlignment, VerticalAlignment verticalAlignment)
-        {
-            double alignedLeft = container.Left;
-            double alignedTop = container.Top;
-
-            if (horizontalAlignment == HorizontalAlignment.Right)
-            {
-                alignedLeft = container.Left + container.Width - alignedRectSize.Width;
-            }
-
-            if (horizontalAlignment == HorizontalAlignment.Center ||
-                (horizontalAlignment == HorizontalAlignment.Stretch && container.Width > alignedRectSize.Width))
-            {
-                alignedLeft = container.Left + (container.Width - alignedRectSize.Width) / 2;
-            }
-
-            if (verticalAlignment == VerticalAlignment.Bottom)
-            {
-                alignedTop = container.Top + container.Height - alignedRectSize.Height;
-            }
-
-            if (verticalAlignment == VerticalAlignment.Center ||
-                (verticalAlignment == VerticalAlignment.Stretch && container.Height > alignedRectSize.Height))
-            {
-                alignedTop = container.Top + (container.Height - alignedRectSize.Height) / 2;
-            }
-
-            return alignedLeft == 0 && alignedTop == 0 ? new Point() : new Point(alignedLeft, alignedTop);
-        }
-
-        //
-        // Summary:
-        //     Provides the behavior for the Arrange pass of Silverlight layout. Classes can
-        //     override this method to define their own Arrange pass behavior.
-        //
-        // Parameters:
-        //   finalSize:
-        //     The final area within the parent that this object should use to arrange itself
-        //     and its children.
-        //
-        // Returns:
-        //     The actual size that is used after the element is arranged in layout.
-        protected virtual Size ArrangeOverride(Size finalSize)
-        {
-            int count = VisualChildrenCount;
-
-            if (count > 0)
-            {
-                UIElement child = GetVisualChild(0);
-                if (child != null)
-                {
-                    child.Arrange(new Rect(finalSize));
-                }
-            }
-            return finalSize;
-        }
-
-        internal sealed override Size MeasureCore(Size availableSize)
-        {
-            Size MinSize = new Size(MinWidth, MinHeight);
-            Size MaxSize = new Size(MaxWidth, MaxHeight);
-            Size size = new Size(Width, Height);
-
-            if (!this.IsCustomLayoutRoot)
-            {
-                availableSize.Width = Math.Max(0, availableSize.Width - Margin.Left - Margin.Right);
-                availableSize.Height = Math.Max(0, availableSize.Height - Margin.Top - Margin.Bottom);
-            }
-            
-            availableSize = size.Combine(availableSize).Bounds(MinSize, MaxSize);
-
-            Size measuredSize = MeasureOverride(availableSize);
-            
-            var w = Math.Max(0, Math.Min(availableSize.Width, measuredSize.Width));
-            var h = Math.Max(0, Math.Min(availableSize.Height, measuredSize.Height));
-            measuredSize = new Size(w, h);
-            measuredSize = size.Combine(measuredSize).Bounds(MinSize, MaxSize);
-
-            if (!this.IsCustomLayoutRoot)
-            {
-                measuredSize.Width = Math.Max(0, measuredSize.Width + Margin.Left + Margin.Right);
-                measuredSize.Height = Math.Max(0, measuredSize.Height + Margin.Top + Margin.Bottom);
-            }
-
-            return measuredSize;
-        }
-
-        //
-        // Summary:
-        //     Provides the behavior for the Measure pass of Silverlight layout. Classes can
-        //     override this method to define their own Measure pass behavior.
-        //
-        // Parameters:
-        //   availableSize:
-        //     The available size that this object can give to child objects. Infinity (System.Double.PositiveInfinity)
-        //     can be specified as a value to indicate that the object will size to whatever
-        //     content is available.
-        //
-        // Returns:
-        //     The size that this object determines it needs during layout, based on its calculations
-        //     of the allocated sizes for child objects; or based on other considerations, such
-        //     as a fixed container size.
-        protected virtual Size MeasureOverride(Size availableSize)
-        {
-            INTERNAL_HtmlDomElementReference domElementReference = (INTERNAL_HtmlDomElementReference)this.INTERNAL_OuterDomElement;
-            Debug.WriteLine($"FrmeworkElement MeasureOverride ({this}) {domElementReference.UniqueIdentifier}, ({Width}, {Height})");
-            return new Size();
-        }
 
 #endregion Work in progress
 
@@ -1390,10 +1145,9 @@ namespace Windows.UI.Xaml
 
 #endregion
 
-        [Obsolete("Use DefaultStyleKey")]
+        [Obsolete(Helper.ObsoleteMemberMessage + " Use DefaultStyleKey instead.")]
         protected void INTERNAL_SetDefaultStyle(Style defaultStyle)
         {
-            INTERNAL_defaultStyle = defaultStyle;
         }
 
         #region Loaded/Unloaded events
@@ -1439,56 +1193,16 @@ namespace Windows.UI.Xaml
 
 #region BindingValidationError event
 
-        internal bool INTERNAL_AreThereAnyBindingValidationErrorHandlers = false;
-
-        private List<EventHandler<ValidationErrorEventArgs>> _bindingValidationErrorHandlers;
-
         /// <summary>
         /// Occurs when a data validation error is reported by a binding source.
         /// </summary>
-        public event EventHandler<ValidationErrorEventArgs> BindingValidationError
+        public event EventHandler<ValidationErrorEventArgs> BindingValidationError;
+
+        internal void OnBindingValidationError(ValidationErrorEventArgs e)
         {
-            add
-            {
-                if (_bindingValidationErrorHandlers == null)
-                {
-                    _bindingValidationErrorHandlers = new List<EventHandler<ValidationErrorEventArgs>>();
-                }
-                _bindingValidationErrorHandlers.Add(value);
-
-                this.INTERNAL_AreThereAnyBindingValidationErrorHandlers = true;
-            }
-            remove
-            {
-                if (_bindingValidationErrorHandlers != null)
-                {
-                    _bindingValidationErrorHandlers.Remove(value);
-
-                    if (_bindingValidationErrorHandlers.Count == 0)
-                    {
-                        this.INTERNAL_AreThereAnyBindingValidationErrorHandlers = false;
-                    }
-                }
-                else
-                {
-                    this.INTERNAL_AreThereAnyBindingValidationErrorHandlers = false;
-                }
-            }
+            BindingValidationError?.Invoke(this, e);
         }
 
-        internal void INTERNAL_RaiseBindingValidationErrorEvent(ValidationErrorEventArgs eventArgs)
-        {
-            if (_bindingValidationErrorHandlers != null)
-            {
-                foreach (EventHandler<ValidationErrorEventArgs> eventHandler in _bindingValidationErrorHandlers)
-                {
-                    if (eventHandler != null)
-                    {
-                        eventHandler(this, eventArgs);
-                    }
-                }
-            }
-        }
 #endregion
 
         protected internal override void INTERNAL_OnDetachedFromVisualTree()
@@ -1574,7 +1288,7 @@ namespace Windows.UI.Xaml
         //StoresParentTemplateValues = 0x00000100,
 
         // free bit = 0x00000200,
-        //NeedsClipBounds = 0x00000400,
+        NeedsClipBounds = 0x00000400,
 
         //HasWidthEverChanged = 0x00000800,
         //HasHeightEverChanged = 0x00001000,

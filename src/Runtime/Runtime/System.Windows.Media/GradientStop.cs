@@ -1,5 +1,4 @@
 ﻿
-
 /*===================================================================================
 * 
 *   Copyright (c) Userware/OpenSilver.net
@@ -12,13 +11,11 @@
 *  
 \*====================================================================================*/
 
-
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.ComponentModel;
 using System.Windows.Markup;
+using OpenSilver.Internal;
 
 #if MIGRATION
 namespace System.Windows.Media
@@ -30,11 +27,9 @@ namespace Windows.UI.Xaml.Media
     /// Describes the location and color of a transition point in a gradient.
     /// </summary>
     [ContentProperty("Color")]
-    public sealed partial class GradientStop : DependencyObject, ICloneOnAnimation
+    public sealed class GradientStop : DependencyObject
     {
         internal Brush INTERNAL_ParentBrush;
-
-        private bool _isAlreadyAClone = false;
 
         // Returns:
         //     The color of the gradient stop. The default is Transparent.
@@ -52,38 +47,23 @@ namespace Windows.UI.Xaml.Media
         public static readonly DependencyProperty ColorProperty =
             DependencyProperty.Register("Color", typeof(Color), typeof(GradientStop), new PropertyMetadata(Color.FromArgb(0, 0, 0, 0))
             {
-                GetCSSEquivalents = (instance) =>
+                GetCSSEquivalents = static (instance) =>
                 {
-                    GradientStop gradientStop = instance as GradientStop;
-                    if (gradientStop != null)
+                    GradientStop gradientStop = (GradientStop)instance;
+                    Brush brush = gradientStop.INTERNAL_ParentBrush;
+                    if (brush != null)
                     {
-                        Brush brush = gradientStop.INTERNAL_ParentBrush;
-                        if(brush != null)
-                        {
-                            Func<CSSEquivalent, ValueToHtmlConverter> parentPropertyToValueToHtmlConverter =
-                            (parentPropertyCSSEquivalent) =>
-                                ((inst, value) =>
-                                {
-                                    return brush;
+                        ValueToHtmlConverter ConvertValueToHtml(CSSEquivalent cssEquivalent) => (inst, value) => brush;
 
-                                    //todo: support "Velocity" animations by using a similar approach as the one of the SolidColorBrush?
-                                });
-
-                            return Brush.MergeCSSEquivalentsOfTheParentsProperties(brush, parentPropertyToValueToHtmlConverter);
-                        }
-                        else
-                        {
-                            // this may happen if the color property is set before the GradientStop has been added to the GradientStopCollection/GradientBrush. 
-                            return new List<CSSEquivalent>();
-                        }
+                        return Brush.MergeCSSEquivalentsOfTheParentsProperties(brush, ConvertValueToHtml);
                     }
                     else
                     {
-                        throw new ArgumentException();
+                        // this may happen if the color property is set before the GradientStop has been added to the GradientStopCollection/GradientBrush. 
+                        return new List<CSSEquivalent>();
                     }
                 }
-            }
-            );
+            });
 
         /// <summary>
         /// Gets the location of the gradient stop within the gradient vector.
@@ -99,20 +79,10 @@ namespace Windows.UI.Xaml.Media
         public static readonly DependencyProperty OffsetProperty =
             DependencyProperty.Register("Offset", typeof(double), typeof(GradientStop), new PropertyMetadata(0d));
 
-        public object Clone()
-        {
-            return new GradientStop
-            {
-                Color = this.Color,
-                Offset = this.Offset,
-                _isAlreadyAClone = true,
-            };
-        }
+        public object Clone() => new GradientStop { Color = Color, Offset = Offset };
 
-        public bool IsAlreadyAClone()
-        {
-            return _isAlreadyAClone;
-        }
-
+        [Obsolete(Helper.ObsoleteMemberMessage)]
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public bool IsAlreadyAClone() => false;
     }
 }

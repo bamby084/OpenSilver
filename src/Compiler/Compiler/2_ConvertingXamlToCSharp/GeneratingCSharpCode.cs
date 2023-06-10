@@ -1,5 +1,4 @@
 ﻿
-
 /*===================================================================================
 * 
 *   Copyright (c) Userware (OpenSilver.net, CSHTML5.com)
@@ -16,15 +15,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Text;
-using System.Threading.Tasks;
 using System.Xml.Linq;
 using System.Xml;
-using System.IO;
 using OpenSilver.Internal;
+using ILogger = OpenSilver.Compiler.Common.ILogger;
 
-namespace DotNetForHtml5.Compiler
+namespace OpenSilver.Compiler
 {
     internal interface ICodeGenerator
     {
@@ -95,7 +92,7 @@ namespace DotNetForHtml5.Compiler
 
         internal const string DefaultXamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         private const string LegacyXamlNamespace = "http://schemas.microsoft.com/client/2007"; // XAML namespace used for Silverlight 1.0 application
-        
+
         private static readonly XNamespace[] DefaultXamlNamespaces = new XNamespace[2] { DefaultXamlNamespace, LegacyXamlNamespace };
         internal static readonly XNamespace xNamespace = @"http://schemas.microsoft.com/winfx/2006/xaml"; // Used for example for "x:Name" attributes and {x:Null} markup extensions.
 
@@ -103,20 +100,20 @@ namespace DotNetForHtml5.Compiler
             string sourceFile,
             string fileNameWithPathRelativeToProjectRoot,
             string assemblyNameWithoutExtension,
-            ReflectionOnSeparateAppDomainHandler reflectionOnSeparateAppDomain,
+            AssembliesInspector reflectionOnSeparateAppDomain,
             bool isFirstPass,
-            bool isSLMigration,
+            ConversionSettings settings,
             string codeToPutInTheInitializeComponentOfTheApplicationClass,
             ILogger logger)
         {
             ICodeGenerator generator;
             if (isFirstPass)
             {
-                generator = new GeneratorPass1(doc, 
-                    assemblyNameWithoutExtension, 
-                    fileNameWithPathRelativeToProjectRoot, 
-                    reflectionOnSeparateAppDomain, 
-                    isSLMigration);
+                generator = new GeneratorPass1(doc,
+                    assemblyNameWithoutExtension,
+                    fileNameWithPathRelativeToProjectRoot,
+                    reflectionOnSeparateAppDomain,
+                    settings);
             }
             else
             {
@@ -125,7 +122,7 @@ namespace DotNetForHtml5.Compiler
                     fileNameWithPathRelativeToProjectRoot,
                     assemblyNameWithoutExtension,
                     reflectionOnSeparateAppDomain,
-                    isSLMigration,
+                    settings,
                     codeToPutInTheInitializeComponentOfTheApplicationClass,
                     logger);
             }
@@ -160,12 +157,11 @@ namespace DotNetForHtml5.Compiler
             return -1;
         }
 
-        private static bool IsAttributeTheXNameAttribute(XAttribute attribute)
-        {
-            bool isXName = (attribute.Name.LocalName == "Name" && attribute.Name.NamespaceName == xNamespace);
-            bool isName = (attribute.Name.LocalName == "Name" && string.IsNullOrEmpty(attribute.Name.NamespaceName));
-            return isXName || isName;
-        }
+        private static bool IsXNameAttribute(XAttribute attr)
+            => attr.Name.LocalName == "Name" && attr.Name.NamespaceName == xNamespace;
+
+        private static bool IsNameAttribute(XAttribute attr)
+            => attr.Name.LocalName == "Name" && string.IsNullOrEmpty(attr.Name.NamespaceName);
 
         private static string CreateInitializeComponentMethod(
             string applicationTypeFullName,
@@ -242,7 +238,7 @@ public partial class {className} : {baseType}, {IComponentConnectorClass}
 
 }}
 ";
-            
+
             string finalCode;
             if (!string.IsNullOrEmpty(namespaceStringIfAny))
             {
@@ -261,11 +257,10 @@ namespace {namespaceStringIfAny}
             return finalCode;
         }
 
-        private static void GetClassInformationFromXaml(XDocument doc, 
-            ReflectionOnSeparateAppDomainHandler reflectionOnSeparateAppDomain, 
-            out string className, 
-            out string namespaceStringIfAny, 
-            out string baseType, 
+        private static void GetClassInformationFromXaml(XDocument doc,
+            AssembliesInspector reflectionOnSeparateAppDomain,
+            out string className,
+            out string namespaceStringIfAny,
             out bool hasCodeBehind)
         {
             // Read the "{x:Class}" attribute:
@@ -301,11 +296,6 @@ namespace {namespaceStringIfAny}
                 hasCodeBehind = false;
                 //todo: handle the case where there is a code-behing but the user has simply forgotten the "x:Class" attribute, in which case the user will currently get strange error messages.
             }
-
-            // Get the base type of the control:
-            string namespaceName, localTypeName, assemblyNameIfAny;
-            GettingInformationAboutXamlTypes.GetClrNamespaceAndLocalName(doc.Root.Name, out namespaceName, out localTypeName, out assemblyNameIfAny);
-            baseType = reflectionOnSeparateAppDomain.GetCSharpEquivalentOfXamlTypeAsString(namespaceName, localTypeName, assemblyNameIfAny, ifTypeNotFoundTryGuessing: true); // Note: we set "ifTypeNotFoundTryGuessing" to true because the type will not be found during Pass1 for example in the case that tthe root of the XAML file is: <myNamespace:MyCustumUserControlDerivedClass .../>
         }
 
         private static string GetFullTypeName(string namespaceName, string typeName)
@@ -403,6 +393,7 @@ public sealed class {factoryName} : {IXamlComponentFactoryClass}<{componentTypeF
         private const string IXamlComponentLoaderClass = "global::OpenSilver.Internal.Xaml.IXamlComponentLoader";
         private const string IComponentConnectorClass = "global::OpenSilver.Internal.Xaml.IComponentConnector";
         private const string XamlContextClass = "global::OpenSilver.Internal.Xaml.Context.XamlContext";
+        private const string IMarkupExtensionClass = "global::System.Xaml.IMarkupExtension<object>";
 
         public static bool IsDataTemplate(XElement element) => IsXElementOfType(element, "DataTemplate");
 
@@ -421,7 +412,7 @@ public sealed class {factoryName} : {IXamlComponentFactoryClass}<{componentTypeF
         public static bool IsSpan(XElement element) => IsXElementOfType(element, "Span");
 
         public static bool IsItalic(XElement element) => IsXElementOfType(element, "Italic");
-        
+
         public static bool IsUnderline(XElement element) => IsXElementOfType(element, "Underline");
 
         public static bool IsBold(XElement element) => IsXElementOfType(element, "Bold");

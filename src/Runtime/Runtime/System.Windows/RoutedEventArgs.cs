@@ -13,6 +13,7 @@
 
 using System;
 using System.ComponentModel;
+using OpenSilver.Internal;
 
 #if MIGRATION
 namespace System.Windows
@@ -99,8 +100,14 @@ namespace Windows.UI.Xaml
         /// <summary>
         /// (Optional) Gets the original javascript event arg.
         /// </summary>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public object INTERNAL_OriginalJSEventArg { get; set; }
+        public object INTERNAL_OriginalJSEventArg
+        {
+            get => UIEventArg;
+            set => UIEventArg = value;
+        }
+
+        internal object UIEventArg { get; set; }
     }
 }

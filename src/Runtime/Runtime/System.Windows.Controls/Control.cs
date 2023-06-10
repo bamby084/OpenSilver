@@ -19,6 +19,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
 using System.Windows.Input;
+using System.ComponentModel;
 
 #if MIGRATION
 using System.Windows.Media;
@@ -42,7 +43,7 @@ namespace Windows.UI.Xaml.Controls
     /// Represents the base class for UI elements that use a ControlTemplate to define
     /// their appearance.
     /// </summary>
-    public partial class Control : FrameworkElement
+    public partial class Control : FrameworkElement, IInternalControl
     {
         //COMMENT 26.03.2020:
         // ERROR DESCRIPTION:
@@ -77,18 +78,11 @@ namespace Windows.UI.Xaml.Controls
             }
         }
 
-        private bool _isDisabled = false;
-
         /// <summary>
         /// Derived classes can set this flag in their constructor to prevent the "Template" property from being applied.
         /// </summary>
-        [Obsolete("This value is ignored. ControlTemplate is always applied.")]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         protected bool INTERNAL_DoNotApplyControlTemplate = false;
-
-        /// <summary>
-        /// Derived classes can set this flag to True in their constructor in order to disable the "GoToState" calls of this class related to PointerOver/Pressed/Disabled, and handle them by themselves. An example is the ToggleButton control, which contains states such as "CheckedPressed", "CheckedPointerOver", etc.
-        /// </summary>
-        protected bool DisableBaseControlHandlingOfVisualStates = false;
 
         //-----------------------
         // ISENABLED (OVERRIDE)
@@ -98,16 +92,12 @@ namespace Windows.UI.Xaml.Controls
         {
             base.ManageIsEnabled(isEnabled); // Useful for setting the "disabled" attribute on the DOM element.
 
-            //OnTabIndexPropertyChanged(TabIndex);
-            UpdateTabIndex(IsTabStop, TabIndex);
-
-            _isDisabled = !isEnabled; // We remember the value so that when we update the visual states, we know whether we should go to the "Disabled" state or not.
             UpdateVisualStates();
         }
 
-        internal override NativeEventsManager CreateEventsManager()
+        internal override void AddEventListeners()
         {
-            return new NativeEventsManager(this, this, this, true);
+            InputManager.Current.AddEventListeners(this, true);
         }
 
         //-----------------------
@@ -132,32 +122,15 @@ namespace Windows.UI.Xaml.Controls
                 typeof(Control), 
                 new PropertyMetadata((object)null)
                 {
-                    GetCSSEquivalent = (instance) => new CSSEquivalent
-                    {
-                        Name = new List<string> { "background", "backgroundColor", "backgroundColorAlpha" },
-                    },
-                    MethodToUpdateDom = (d, e) =>
-                    {
-                        UIElement.SetPointerEvents((Control)d);
-                    },
+                    MethodToUpdateDom2 = UpdateDomOnBackgroundChanged,
                 });
 
-        internal bool INTERNAL_IsLegacyVisualStates
+        private static void UpdateDomOnBackgroundChanged(DependencyObject d, object oldValue, object newValue)
         {
-            get
+            var control = (Control)d;
+            if (!control.HasTemplate)
             {
-                if (StateGroupsRoot == null)
-                {
-                    return false;
-                }
-
-                IList<VisualStateGroup> groups = (Collection<VisualStateGroup>)this.GetValue(VisualStateManager.VisualStateGroupsProperty);
-                if (groups == null)
-                {
-                    return false;
-                }
-
-                return groups.Any(gr => ((IList<VisualState>)gr.States).Any(state => state.Name == VisualStates.StateMouseOver));
+                _ = Panel.RenderBackgroundAsync(control, (Brush)newValue);
             }
         }
 
@@ -220,7 +193,7 @@ namespace Windows.UI.Xaml.Controls
         }
 
         /// <summary>
-        /// Identifies the <see cref="Control.FontWeight"/> dependency property.
+        /// Identifies the <see cref="FontWeight"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty FontWeightProperty =
             DependencyProperty.Register(
@@ -230,12 +203,12 @@ namespace Windows.UI.Xaml.Controls
                 new FrameworkPropertyMetadata(FontWeights.Normal, FrameworkPropertyMetadataOptions.AffectsMeasure)
                 {
                     Inherits = true,
-                    GetCSSEquivalent = (instance) => new CSSEquivalent
+                    MethodToUpdateDom2 = static (d, oldValue, newValue) =>
                     {
-                        Value = (inst, value) => ((FontWeight)value).Weight.ToInvariantString(),
-                        Name = new List<string> { "fontWeight" },
-                        ApplyAlsoWhenThereIsAControlTemplate = true // (See comment where this property is defined)
-                    }
+                        var c = (Control)d;
+                        var style = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(c.INTERNAL_OuterDomElement);
+                        style.fontWeight = ((FontWeight)newValue).ToOpenTypeWeight().ToInvariantString();
+                    },
                 });
 
         /// <summary>
@@ -248,7 +221,7 @@ namespace Windows.UI.Xaml.Controls
         }
 
         /// <summary>
-        /// Identifies the <see cref="Control.FontStyle"/> dependency property.
+        /// Identifies the <see cref="FontStyle"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty FontStyleProperty =
             DependencyProperty.Register(
@@ -261,15 +234,14 @@ namespace Windows.UI.Xaml.Controls
 #else
                     FontStyle.Normal
 #endif
-                    , FrameworkPropertyMetadataOptions.AffectsMeasure
-                    )
+                    , FrameworkPropertyMetadataOptions.AffectsMeasure)
                 {
-                    GetCSSEquivalent = (instance) => new CSSEquivalent
+                    MethodToUpdateDom2 = static (d, oldValue, newValue) =>
                     {
-                        Value = (inst, value) => ((FontStyle)value).ToString().ToLower(),
-                        Name = new List<string> { "fontStyle" },
-                        ApplyAlsoWhenThereIsAControlTemplate = true // (See comment where this property is defined)
-                    }
+                        var c = (Control)d;
+                        var style = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(c.INTERNAL_OuterDomElement);
+                        style.fontStyle = ((FontStyle)newValue).ToString().ToLower();
+                    },
                 });
 
         //-----------------------
@@ -295,12 +267,29 @@ namespace Windows.UI.Xaml.Controls
                 typeof(Control), 
                 new PropertyMetadata(new SolidColorBrush(Colors.Black))
                 {
-                    GetCSSEquivalent = (instance) => new CSSEquivalent
-                    {
-                        Name = new List<string> { "color", "colorAlpha" },
-                        ApplyAlsoWhenThereIsAControlTemplate = true // (See comment where this property is defined)
-                    }
+                    MethodToUpdateDom2 = UpdateDomOnForegroundChanged,
                 });
+
+        private static void UpdateDomOnForegroundChanged(DependencyObject d, object oldValue, object newValue)
+        {
+            var control = (Control)d;
+            var cssStyle = INTERNAL_HtmlDomManager.GetFrameworkElementOuterStyleForModification(control);
+            switch (newValue)
+            {
+                case SolidColorBrush solid:
+                    cssStyle.color = solid.INTERNAL_ToHtmlString();
+                    break;
+
+                case null:
+                    cssStyle.color = string.Empty;
+                    break;
+
+                default:
+                    // GradientBrush, ImageBrush and custom brushes are not supported.
+                    // Keep using old brush.
+                    break;
+            }
+        }
 
         //-----------------------
         // FONTFAMILY
@@ -316,7 +305,7 @@ namespace Windows.UI.Xaml.Controls
         }
 
         /// <summary>
-        /// Identifies the <see cref="Control.FontFamily"/> dependency property.
+        /// Identifies the <see cref="FontFamily"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty FontFamilyProperty =
             DependencyProperty.Register(
@@ -325,14 +314,14 @@ namespace Windows.UI.Xaml.Controls
                 typeof(Control),
                 new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsMeasure)
                 {
-                    GetCSSEquivalent = (instance) => new CSSEquivalent
+                    MethodToUpdateDom2 = static (d, oldValue, newValue) =>
                     {
-                        Value = (inst, value) => (value is FontFamily) ?
-                            INTERNAL_FontsHelper.LoadFont(((FontFamily)value).Source, (UIElement)instance) :
-                            string.Empty,
-                        Name = new List<string> { "fontFamily" },
-                        ApplyAlsoWhenThereIsAControlTemplate = true // (See comment where this property is defined)
-                    }
+                        var c = (Control)d;
+                        var style = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(c.INTERNAL_OuterDomElement);
+                        style.fontFamily = newValue is FontFamily ff ?
+                            INTERNAL_FontsHelper.LoadFont(ff.Source, c) :
+                            string.Empty;
+                    },
                 });
 
         //-----------------------
@@ -363,17 +352,7 @@ namespace Windows.UI.Xaml.Controls
                     {
                         Value = (inst, value) =>
                         {
-#if GD_WIP
-                            if (value is Binding binding)
-                            {
-                                value = binding.Source;
-                                binding.Path.Path.Split('.')
-                                    .ForEach(p =>
-                                        value = value.GetType().GetProperty(p).GetValue(value)
-                                    );
-                            }
-
-#endif                      // Note: We multiply by 1000 and then divide by 1000 so as to only keep 3 
+                            // Note: We multiply by 1000 and then divide by 1000 so as to only keep 3 
                             // decimals at the most.
                             return (Math.Floor(Convert.ToDouble(value) * 1000) / 1000).ToInvariantString() + "px"; 
                         },
@@ -404,19 +383,14 @@ namespace Windows.UI.Xaml.Controls
                 nameof(TextDecorations),
                 typeof(TextDecorationCollection),
                 typeof(Control),
-                new FrameworkPropertyMetadata((object)null, FrameworkPropertyMetadataOptions.AffectsMeasure)
+                new FrameworkPropertyMetadata(null)
                 {
-                    GetCSSEquivalent = INTERNAL_GetCSSEquivalentForTextDecorations,
+                    MethodToUpdateDom = static (d, newValue) =>
+                    {
+                        var domStyle = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(((Control)d).INTERNAL_OuterDomElement);
+                        domStyle.textDecoration = ((TextDecorationCollection)newValue)?.ToHtmlString() ?? string.Empty;
+                    },
                 });
-
-        internal static CSSEquivalent INTERNAL_GetCSSEquivalentForTextDecorations(DependencyObject instance)
-        {
-            return new CSSEquivalent
-            {
-                Value = (inst, value) => ((TextDecorationCollection)value)?.ToHtmlString() ?? string.Empty,
-                Name = new List<string>(1) { "textDecoration" },
-            };
-        }
 #else
         /// <summary>
         /// Gets or sets the text decorations (underline, strikethrough...).
@@ -437,50 +411,26 @@ namespace Windows.UI.Xaml.Controls
                 typeof(Control), 
                 new PropertyMetadata((object)null)
                 {
-                    GetCSSEquivalent = INTERNAL_GetCSSEquivalentForTextDecorations,
-                });
-
-        internal static CSSEquivalent INTERNAL_GetCSSEquivalentForTextDecorations(DependencyObject instance)
-        {
-            return new CSSEquivalent
-            {
-                Value = (inst, value) =>
-                {
-#if BRIDGE
-                    if (value != null) //todo: remove this line when Bridge.NET no longer raises exception on the following lines (cf. styles kit v1.1)
+                    MethodToUpdateDom = static (d, newValue) =>
                     {
-#endif
-                        TextDecorations? newTextDecoration = (TextDecorations?)value;
+                        var domStyle = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(((Control)d).INTERNAL_OuterDomElement);
+                        var newTextDecoration = (TextDecorations?)newValue;
                         if (newTextDecoration.HasValue)
                         {
-                            switch (newTextDecoration)
+                            domStyle.textDecoration = newTextDecoration switch
                             {
-                                case Windows.UI.Text.TextDecorations.OverLine:
-                                    return "overline";
-                                case Windows.UI.Text.TextDecorations.Strikethrough:
-                                    return "line-through";
-                                case Windows.UI.Text.TextDecorations.Underline:
-                                    return "underline";
-                                case Windows.UI.Text.TextDecorations.None:
-                                default:
-                                    return ""; // Note: this will reset the value.
-                            }
+                                Text.TextDecorations.OverLine => "overline",
+                                Text.TextDecorations.Strikethrough => "line-through",
+                                Text.TextDecorations.Underline => "underline",
+                                _ => "",
+                            };
                         }
                         else
                         {
-                            return "";
+                            domStyle.textDecoration = "";
                         }
-#if BRIDGE
-                    }
-                    else
-                    {
-                        return "";
-                    }
-#endif
-                },
-                Name = new List<string> { "textDecoration" },
-            };
-        }
+                    },
+                });
 #endif
 
         //-----------------------
@@ -497,37 +447,35 @@ namespace Windows.UI.Xaml.Controls
         }
 
         /// <summary>
-        /// Identifies the <see cref="Control.Padding"/> dependency property.
+        /// Identifies the <see cref="Padding"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty PaddingProperty =
             DependencyProperty.Register(
-                nameof(Padding), 
-                typeof(Thickness), 
+                nameof(Padding),
+                typeof(Thickness),
                 typeof(Control),
                 new FrameworkPropertyMetadata(new Thickness(), FrameworkPropertyMetadataOptions.AffectsMeasure)
-                { 
-                    MethodToUpdateDom = Padding_MethodToUpdateDom,
-                });
-
-        private static void Padding_MethodToUpdateDom(DependencyObject d, object newValue)
-        {
-            var control = (Control)d;
-            // if the parent is a canvas, we ignore this property and we want to ignore this
-            // property if there is a ControlTemplate on this control.
-            if (!(control.INTERNAL_VisualParent is Canvas) && !control.HasTemplate && !control.IsUnderCustomLayout) 
-            {
-                var innerDomElement = control.INTERNAL_InnerDomElement;
-                if (innerDomElement != null)
                 {
-                    var styleOfInnerDomElement = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(innerDomElement);
-                    Thickness newPadding = (Thickness)newValue;
-                    
-                    // todo: if the container has a padding, add it to the margin
-                    styleOfInnerDomElement.boxSizing = "border-box";
-                    styleOfInnerDomElement.padding = $"{newPadding.Top.ToString(CultureInfo.InvariantCulture)}px {newPadding.Right.ToString(CultureInfo.InvariantCulture)}px {newPadding.Bottom.ToString(CultureInfo.InvariantCulture)}px {newPadding.Left.ToString(CultureInfo.InvariantCulture)}px";
-                }
-            }
-        }
+                    MethodToUpdateDom = static (d, newValue) =>
+                    {
+                        var control = (Control)d;
+                        // if the parent is a canvas, we ignore this property and we want to ignore this
+                        // property if there is a ControlTemplate on this control.
+                        // textblock under custom layout can support padding property now
+                        if (control.INTERNAL_InnerDomElement != null && 
+                            !control.HasTemplate && 
+                            control.INTERNAL_VisualParent is not Canvas && 
+                            (!control.IsUnderCustomLayout || control is TextBlock))
+                        {
+                            var domStyle = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(control.INTERNAL_InnerDomElement);
+                            Thickness padding = (Thickness)newValue;
+
+                            // todo: if the container has a padding, add it to the margin
+                            domStyle.boxSizing = "border-box";
+                            domStyle.padding = $"{padding.Top.ToInvariantString()}px {padding.Right.ToInvariantString()}px {padding.Bottom.ToInvariantString()}px {padding.Left.ToInvariantString()}px";
+                        }
+                    },
+                });
 
         //-----------------------
         // HORIZONTALCONTENTALIGNMENT
@@ -543,14 +491,14 @@ namespace Windows.UI.Xaml.Controls
         }
 
         /// <summary>
-        /// Identifies the <see cref="Control.HorizontalContentAlignment"/> dependency property.
+        /// Identifies the <see cref="HorizontalContentAlignment"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty HorizontalContentAlignmentProperty =
             DependencyProperty.Register(
                 nameof(HorizontalContentAlignment), 
                 typeof(HorizontalAlignment), 
                 typeof(Control),
-                new FrameworkPropertyMetadata(HorizontalAlignment.Center, FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsArrange));
+                new FrameworkPropertyMetadata(HorizontalAlignment.Center, FrameworkPropertyMetadataOptions.AffectsArrange));
 
         //-----------------------
         // VERTICALCONTENTALIGNMENT
@@ -566,14 +514,14 @@ namespace Windows.UI.Xaml.Controls
         }
 
         /// <summary>
-        /// Identifies the <see cref="Control.VerticalContentAlignment"/> dependency property.
+        /// Identifies the <see cref="VerticalContentAlignment"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty VerticalContentAlignmentProperty =
             DependencyProperty.Register(
                 nameof(VerticalContentAlignment), 
                 typeof(VerticalAlignment), 
                 typeof(Control),
-                new FrameworkPropertyMetadata(VerticalAlignment.Center, FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsArrange));
+                new FrameworkPropertyMetadata(VerticalAlignment.Center, FrameworkPropertyMetadataOptions.AffectsArrange));
 
         //-----------------------
         // TABINDEX
@@ -586,82 +534,19 @@ namespace Windows.UI.Xaml.Controls
         /// </summary>
         public int TabIndex
         {
-            get { return (int)GetValue(TabIndexProperty); }
-            set { SetValue(TabIndexProperty, value); }
+            get => (int)GetValue(TabIndexProperty);
+            set => SetValue(TabIndexProperty, value);
         }
 
         /// <summary>
-        /// Identifies the <see cref="Control.TabIndex"/> dependency property.
+        /// Identifies the <see cref="TabIndex"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty TabIndexProperty =
             DependencyProperty.Register(
                 nameof(TabIndex), 
                 typeof(int), 
                 typeof(Control), 
-                new PropertyMetadata(int.MaxValue)
-                {
-                    MethodToUpdateDom = TabIndexProperty_MethodToUpdateDom,
-                });
-
-        private const int TABINDEX_BROWSER_MAX_VALUE = 32767;
-
-        internal virtual bool INTERNAL_GetFocusInBrowser => false;
-        internal virtual void UpdateTabIndex(bool isTabStop, int tabIndex)
-        {
-            var domElementConcernedByFocus = GetFocusTarget();
-            if (domElementConcernedByFocus == null)
-                return;
-            if (!isTabStop || !this.IsEnabled)
-            {
-                this.PreventFocusEvents();
-                INTERNAL_HtmlDomManager.SetDomElementAttribute(domElementConcernedByFocus, "tabIndex", this.INTERNAL_GetFocusInBrowser ? "-1" : string.Empty);
-            }
-            else
-            {
-                //Note: according to W3C, tabIndex needs to be between 0 and 32767 on browsers: https://www.w3.org/TR/html401/interact/forms.html#adef-tabindex
-                //      also, the behaviour of the different browsers outside of these values can be different and therefore, we have to restrict the values.
-
-                this.AllowFocusEvents();
-
-                //We translate the TabIndexes to have a little margin with negative TabIndexes:
-                //this is because a negative tabIndex in html is equivalent to IsTabStop = false in CS.
-                //this way, we make sure to keep the order of elements with TabIndexes between -100 and TABINDEX_BROWSER_MAX_VALUE - 100
-                //100 is empirically chosen because the only reason I would see for a negative TabIndex would be if the person has already set some TabIndexes and forgot one that needs to come before that so he is likely to simply use small numbers.
-                int index;
-                if (tabIndex < (TABINDEX_BROWSER_MAX_VALUE - 100))
-                {
-                    index = Math.Max(tabIndex + 100, 0); //this is not ideal but it'll have do for now.
-                }
-                else
-                {
-                    index = TABINDEX_BROWSER_MAX_VALUE;
-                }
-
-                INTERNAL_HtmlDomManager.SetDomElementAttribute(domElementConcernedByFocus, "tabIndex", index.ToString()); //note: not replaced with GetCSSEquivalent because it uses SetDomeElementAttribute (so it's not the style)
-
-                //in the case where the control should not have an outline even when focused or when the control has a template that defines the VisualState "Focused", we remove the default outline that browsers put:
-                IList<VisualStateGroup> groups = this.StateGroupsRoot?.GetValue(VisualStateManager.VisualStateGroupsProperty) as Collection<VisualStateGroup>;
-                if (!this.UseSystemFocusVisuals ||
-                    (groups != null && groups.Any(gr => ((IList<VisualState>)gr.States).Any(state => state.Name == "Focused"))))
-                {
-
-                    // this.INTERNAL_GetVisualStateGroups().ContainsVisualState("Focused")
-                    INTERNAL_HtmlDomManager.SetDomElementStyleProperty(domElementConcernedByFocus, new List<string>() { "outline" }, "none");
-                }
-            }
-        }
-
-        internal static void TabIndexProperty_MethodToUpdateDom(DependencyObject d, object newValue)
-        {
-            var control = (Control)d;
-            control.UpdateTabIndex(control.IsTabStop, (int)newValue);
-        }
-
-        internal static void TabStopProperty_MethodToUpdateDom(DependencyObject d, object newValue)
-        {
-            var control = (Control)d;
-            control.UpdateTabIndex((bool)newValue, control.TabIndex);
-        }
+                new PropertyMetadata(int.MaxValue));
 
         //-----------------------
         // ISTABSTOP
@@ -673,22 +558,42 @@ namespace Windows.UI.Xaml.Controls
         /// </summary>
         public bool IsTabStop
         {
-            get { return (bool)GetValue(IsTabStopProperty); }
-            set { SetValue(IsTabStopProperty, value); }
+            get => (bool)GetValue(IsTabStopProperty);
+            set => SetValue(IsTabStopProperty, value);
         }
 
         /// <summary>
-        /// Identifies the <see cref="Control.IsTabStop"/> dependency property.
+        /// Identifies the <see cref="IsTabStop"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty IsTabStopProperty =
             DependencyProperty.Register(
                 nameof(IsTabStop),    
                 typeof(bool), 
                 typeof(Control), 
-                new PropertyMetadata(true)
-                {
-                    MethodToUpdateDom = TabStopProperty_MethodToUpdateDom,
-                });
+                new PropertyMetadata(true));
+
+        /// <summary>
+        /// Gets or sets a value that modifies how tabbing and <see cref="TabIndex"/>
+        /// work for this control.
+        /// </summary>
+        /// <returns>
+        /// A value of the enumeration. The default is <see cref="KeyboardNavigationMode.Local"/>.
+        /// </returns>
+        public KeyboardNavigationMode TabNavigation
+        {
+            get => (KeyboardNavigationMode)GetValue(TabNavigationProperty);
+            set => SetValue(TabNavigationProperty, value);
+        }
+
+        /// <summary>
+        /// Identifies the <see cref="TabNavigation"/> dependency property.
+        /// </summary>
+        public static readonly DependencyProperty TabNavigationProperty =
+            DependencyProperty.Register(
+                nameof(TabNavigation),
+                typeof(KeyboardNavigationMode),
+                typeof(Control),
+                new PropertyMetadata(KeyboardNavigationMode.Local));
 
         //-----------------------
         // TEMPLATE
@@ -733,12 +638,19 @@ namespace Windows.UI.Xaml.Controls
             Control control = (Control)d;
             FrameworkElement.UpdateTemplateCache(control, (FrameworkTemplate)e.OldValue, (FrameworkTemplate)e.NewValue, TemplateProperty);
 
-            if (control.IsConnectedToLiveTree)
+            if (INTERNAL_VisualTreeManager.IsElementInVisualTree(control))
             {
                 control.InvalidateMeasureInternal();
             }
         }
 
+        /// <summary>
+        /// Loads the relevant control template so that its parts can be referenced.
+        /// </summary>
+        /// <returns>
+        /// Returns whether the visual tree was rebuilt by this call. true indicates the
+        /// tree was rebuilt; false indicates that the previous visual tree was retained.
+        /// </returns>
         public new bool ApplyTemplate()
         {
             return base.ApplyTemplate();
@@ -757,11 +669,6 @@ namespace Windows.UI.Xaml.Controls
             return base.GetTemplateChild(childName);
         }
 
-        internal void RaiseOnApplyTemplate()
-        {
-            this.OnApplyTemplate();
-        }
-
         //-----------------------
         // OTHER
         //-----------------------
@@ -775,28 +682,52 @@ namespace Windows.UI.Xaml.Controls
         /// </returns>
         public bool Focus()
         {
-            if (Keyboard.IsFocusable(this))
+            if (KeyboardNavigation.Current.Focus(this) is UIElement uie)
             {
-                INTERNAL_HtmlDomManager.SetFocus(this);
-                
-                FocusManager.SetFocusedElement(this.INTERNAL_ParentWindow, this);
-
-                return true; //todo: see if there is a way for this to fail, in which case we want to return false.
+                INTERNAL_HtmlDomManager.SetFocus(uie);
+                KeyboardNavigation.UpdateFocusedElement(uie);
+                return true;
             }
+
             return false;
         }
 
-        private bool _useSystemFocusVisuals = false;
-        /// <summary>
-        /// Determines whether the control displays the browser's default outline when Focused.
-        /// This property is ignored for Controls with a Template that defines the "Focused" VisualState.
-        /// The default value is False.
-        /// </summary>
+        private bool _useSystemFocusVisuals;
+
+        [Obsolete(Helper.ObsoleteMemberMessage)]
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public bool UseSystemFocusVisuals
         {
-            get { return _useSystemFocusVisuals; }
-            set { _useSystemFocusVisuals = value; } //todo: change the element in the visual tree?
+            get => _useSystemFocusVisuals;
+            set
+            {
+                if (_useSystemFocusVisuals != value)
+                {
+                    _useSystemFocusVisuals = value;
+                    UpdateSystemFocusVisuals();
+                }
+            }
         }
+
+        internal void UpdateSystemFocusVisuals()
+        {
+            object focusTarget = GetFocusTarget();
+            if (focusTarget != null)
+            {
+                INTERNAL_HtmlDomManager.SetCSSStyleProperty(
+                    focusTarget,
+                    "outline",
+                    _useSystemFocusVisuals ? string.Empty : "none");
+            }
+        }
+
+        /// <summary>
+        /// If control has a scrollviewer in its style and has a custom keyboard 
+        /// scrolling behavior when HandlesScrolling should return true.
+        /// Then ScrollViewer will not handle keyboard input and leave it up to 
+        /// the control.
+        /// </summary>
+        internal virtual bool HandlesScrolling => false;
 
 #if MIGRATION
         public override void OnApplyTemplate()
@@ -806,194 +737,52 @@ namespace Windows.UI.Xaml.Controls
         {
             base.OnApplyTemplate();
 
-            if (!DisableBaseControlHandlingOfVisualStates)
+            if (_visualStatesUpdater != null)
             {
-                // Go to the default state ("Normal" visual state):
-                UpdateVisualStates();
+                _visualStatesUpdater.Dispose();
+                _visualStatesUpdater = null;
+            }
 
-                bool hasMouseOverState = false;
-                bool hasPressedState = false;
-                bool hasFocusedState = false;
-                Collection<VisualStateGroup> groups = (Collection<VisualStateGroup>)this.StateGroupsRoot?.GetValue(VisualStateManager.VisualStateGroupsProperty);
-                if (groups != null)
-                {
-                    foreach (VisualStateGroup group in groups)
-                    {
-                        foreach (VisualState state in group.States)
-                        {
-#if MIGRATION
-                            if (state.Name == "MouseOver")
-#else
-                            if (state.Name == "PointerOver")
-#endif
-                            {
-                                hasMouseOverState = true;
-                            }
-                            else if (state.Name == "Pressed")
-                            {
-                                hasPressedState = true;
-                            }
-                            else if (state.Name == "Focused")
-                            {
-                                hasFocusedState = true;
-                            }
-                        }
-                    }
-                }
-
-
-
-                // Listen to the Pointer events:
-                if (hasMouseOverState)
-                {
-                    // Note: We unregster the event before registering it because, in case the user removes the control from the visual tree and puts it back, the "OnApplyTemplate" is called again.
-#if MIGRATION
-                    this.MouseEnter -= Control_MouseEnter;
-                    this.MouseEnter += Control_MouseEnter;
-                    this.MouseLeave -= Control_MouseLeave;
-                    this.MouseLeave += Control_MouseLeave;
-#else
-            this.PointerEntered -= Control_PointerEntered;
-            this.PointerEntered += Control_PointerEntered;
-            this.PointerExited -= Control_PointerExited;
-            this.PointerExited += Control_PointerExited;
-#endif
-                }
-
-                if (hasPressedState)
-                {
-                    // Note: We unregster the event before registering it because, in case the user removes the control from the visual tree and puts it back, the "OnApplyTemplate" is called again.
-#if MIGRATION
-                    this.MouseLeftButtonDown -= Control_MouseLeftButtonDown;
-                    this.MouseLeftButtonDown += Control_MouseLeftButtonDown;
-                    this.MouseLeftButtonUp -= Control_MouseLeftButtonUp;
-                    this.MouseLeftButtonUp += Control_MouseLeftButtonUp;
-#else
-            this.PointerPressed -= Control_PointerPressed;
-            this.PointerPressed += Control_PointerPressed;
-            this.PointerReleased -= Control_PointerReleased;
-            this.PointerReleased += Control_PointerReleased;
-#endif
-                }
-
-                if (hasFocusedState)
-                {
-                    // Note: We unregster the event before registering it because, in case the user removes the control from the visual tree and puts it back, the "OnApplyTemplate" is called again.
-                    //#if MIGRATION
-                    //                    this.MouseLeftButtonDown -= Control_MouseLeftButtonDown;
-                    //                    this.MouseLeftButtonDown += Control_MouseLeftButtonDown;
-                    //                    this.MouseLeftButtonUp -= Control_MouseLeftButtonUp;
-                    //                    this.MouseLeftButtonUp += Control_MouseLeftButtonUp;
-                    //#else
-                    this.GotFocus -= Control_GotFocus;
-                    this.GotFocus += Control_GotFocus;
-                    this.LostFocus -= Control_LostFocus;
-                    this.LostFocus += Control_LostFocus;
-                    //#endif
-                }
+            if (EnableBaseControlHandlingOfVisualStates)
+            {
+                _visualStatesUpdater = new VisualStateUpdater(this);
             }
         }
 
-        bool _isFocused = false;
-        void Control_LostFocus(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// Called before the <see cref="UIElement.GotFocus"/> event occurs.
+        /// </summary>
+        /// <param name="e">
+        /// The data for the event.
+        /// </param>
+        protected override void OnGotFocus(RoutedEventArgs e)
         {
-            _isFocused = false;
-            UpdateVisualStatesForFocus();
-
-            if (!this._isInvalid)
-                return;
-            this.UpdateValidationState();
-        }
-
-        void Control_GotFocus(object sender, RoutedEventArgs e)
-        {
+            base.OnGotFocus(e);
             _isFocused = true;
-            UpdateVisualStatesForFocus();
 
-            if (!this._isInvalid)
-                return;
-            this.UpdateValidationState();
-        }
-
-        bool _isPointerOver = false;
-        bool _isPressed = false;
-
-#if MIGRATION
-        void Control_MouseEnter(object sender, Input.MouseEventArgs e)
-#else
-void Control_PointerEntered(object sender, Input.PointerRoutedEventArgs e)
-#endif
-        {
-            _isPointerOver = true;
-            UpdateVisualStates();
-        }
-
-#if MIGRATION
-        void Control_MouseLeave(object sender, Input.MouseEventArgs e)
-#else
-void Control_PointerExited(object sender, Input.PointerRoutedEventArgs e)
-#endif
-        {
-            _isPointerOver = false;
-            UpdateVisualStates();
-        }
-
-#if MIGRATION
-        void Control_MouseLeftButtonDown(object sender, Input.MouseButtonEventArgs e)
-#else
-void Control_PointerPressed(object sender, Input.PointerRoutedEventArgs e)
-#endif
-        {
-            _isPressed = true;
-            UpdateVisualStates();
-        }
-
-#if MIGRATION
-        void Control_MouseLeftButtonUp(object sender, Input.MouseButtonEventArgs e)
-#else
-void Control_PointerReleased(object sender, Input.PointerRoutedEventArgs e)
-#endif
-        {
-            _isPressed = false;
-            UpdateVisualStates();
-        }
-
-        internal virtual void UpdateVisualStates()
-        {
-            if (!DisableBaseControlHandlingOfVisualStates)
+            if (_isInvalid)
             {
-                if (_isDisabled)
-                    VisualStateManager.GoToState(this, "Disabled", true);
-                else if (_isPressed)
-                    VisualStateManager.GoToState(this, "Pressed", true);
-                else if (_isPointerOver)
-#if MIGRATION
-                    VisualStateManager.GoToState(this, "MouseOver", true);
-#else
-                    VisualStateManager.GoToState(this, "PointerOver", true);
-#endif
-                else
-                    VisualStateManager.GoToState(this, "Normal", true);
-
-
+                UpdateValidationState();
             }
         }
 
-        void UpdateVisualStatesForFocus()
+        /// <summary>
+        /// Called before the <see cref="UIElement.LostFocus"/> event occurs.
+        /// </summary>
+        /// <param name="e">
+        /// The data for the event.
+        /// </param>
+        protected override void OnLostFocus(RoutedEventArgs e)
         {
-            if (!DisableBaseControlHandlingOfVisualStates)
+            base.OnLostFocus(e);
+            _isFocused = false;
+
+            if (_isInvalid)
             {
-                if (_isFocused)
-                {
-                    VisualStateManager.GoToState(this, "Focused", true);
-                }
-                else
-                {
-                    VisualStateManager.GoToState(this, "Unfocused", true);
-                }
+                UpdateValidationState();
             }
         }
-
+        
         public override object CreateDomElement(object parentRef, out object domElementWhereToPlaceChildren)
         {
 #if !BRIDGE
@@ -1031,37 +820,6 @@ void Control_PointerReleased(object sender, Input.PointerRoutedEventArgs e)
             }
         }
 
-        internal void GoToState(string state)
-        {
-            VisualStateManager.GoToState(this, state, true);
-        }
-
-        private bool _isInvalid;
-
-        internal void ShowValidationError()
-        {
-            this._isInvalid = true;
-            this.UpdateValidationState();
-        }
-
-        internal void HideValidationError()
-        {
-            this._isInvalid = false;
-            this.UpdateValidationState();
-        }
-
-        internal void UpdateValidationState()
-        {
-            if (this._isInvalid)
-            {
-                VisualStateManager.GoToState(this, _isFocused ? "InvalidFocused" : "InvalidUnfocused", true);
-            }                
-            else
-            {
-                VisualStateManager.GoToState(this, "Valid", true);
-            }
-        }
-
         [OpenSilver.NotImplemented]
         public static readonly DependencyProperty CharacterSpacingProperty =
             DependencyProperty.Register(
@@ -1083,21 +841,6 @@ void Control_PointerReleased(object sender, Input.PointerRoutedEventArgs e)
         {
             get { return (int)GetValue(CharacterSpacingProperty); }
             set { SetValue(CharacterSpacingProperty, value); }
-        }
-
-        [OpenSilver.NotImplemented]
-        public static readonly DependencyProperty TabNavigationProperty = 
-            DependencyProperty.Register(
-                nameof(TabNavigation), 
-                typeof(KeyboardNavigationMode), 
-                typeof(Control), 
-                new PropertyMetadata(KeyboardNavigationMode.Local));
-
-        [OpenSilver.NotImplemented]
-        public KeyboardNavigationMode TabNavigation
-        {
-            get { return (KeyboardNavigationMode)this.GetValue(Control.TabNavigationProperty); }
-            set { this.SetValue(Control.TabNavigationProperty, value); }
         }
 
         [OpenSilver.NotImplemented]
@@ -1161,6 +904,8 @@ void Control_PointerReleased(object sender, Input.PointerRoutedEventArgs e)
         {
 
         }
+
+        /// <inheritdoc/>
         protected override Size MeasureOverride(Size availableSize)
         {
             int count = VisualChildrenCount;
@@ -1178,5 +923,20 @@ void Control_PointerReleased(object sender, Input.PointerRoutedEventArgs e)
             return new Size(0.0, 0.0);
         }
 
+        /// <inheritdoc/>
+        protected override Size ArrangeOverride(Size finalSize)
+        {
+            int count = VisualChildrenCount;
+
+            if (count > 0)
+            {
+                UIElement child = GetVisualChild(0);
+                if (child != null)
+                {
+                    child.Arrange(new Rect(finalSize));
+                }
+            }
+            return finalSize;
+        }
     }
 }

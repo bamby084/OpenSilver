@@ -28,6 +28,7 @@ using Windows.UI.Text;
 using Windows.UI.Xaml.Automation.Peers;
 using Windows.UI.Xaml.Media;
 using Windows.UI.Xaml.Input;
+using KeyEventArgs = Windows.UI.Xaml.Input.KeyRoutedEventArgs;
 #endif
 
 #if MIGRATION
@@ -48,27 +49,35 @@ namespace Windows.UI.Xaml.Controls
     ///     TextBoxName.Text = "Some text";
     /// </code>
     /// </example>
+    [TemplatePart(Name = ContentElementName, Type = typeof(FrameworkElement))]
+    [TemplateVisualState(Name = VisualStates.StateReadOnly, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateDisabled, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateMouseOver, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateNormal, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateFocused, GroupName = VisualStates.GroupFocus)]
+    [TemplateVisualState(Name = VisualStates.StateUnfocused, GroupName = VisualStates.GroupFocus)]
+    [TemplateVisualState(Name = VisualStates.StateValid, GroupName = VisualStates.GroupValidation)]
+    [TemplateVisualState(Name = VisualStates.StateInvalidUnfocused, GroupName = VisualStates.GroupValidation)]
+    [TemplateVisualState(Name = VisualStates.StateInvalidFocused, GroupName = VisualStates.GroupValidation)]
     public partial class TextBox : Control
     {
+        private const string ContentElementName = "ContentElement"; // Sl & UWP
+        private const string ContentElementName_WPF = "PART_ContentHost"; // WPF
+
         private bool _isProcessingInput;
+        private bool _isFocused;
         private int? _selectionIdxCache;
+        private ScrollViewer _scrollViewer;
         private FrameworkElement _contentElement;
         private ITextBoxViewHost<TextBoxView> _textViewHost;
 
-        /// <summary>
-        /// The name of the ExpanderButton template part.
-        /// </summary>
-        private readonly string[] TextAreaContainerNames = { "ContentElement", "PART_ContentHost" };
-        //                                                  Sl & UWP                WPF
-
         public TextBox()
         {
-            this.DefaultStyleKey = typeof(TextBox);
+            DefaultStyleKey = typeof(TextBox);
+            IsEnabledChanged += (o, e) => UpdateVisualStates();
         }
 
-        internal override object GetFocusTarget() => _textViewHost?.View?.InputDiv;
-
-        internal sealed override bool INTERNAL_GetFocusInBrowser => true;
+        internal sealed override object GetFocusTarget() => _textViewHost?.View?.InputDiv;
 
         /// <summary>
         /// Gets or sets the value that determines whether the text box allows and displays
@@ -254,6 +263,7 @@ namespace Windows.UI.Xaml.Controls
         private static void OnTextWrappingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             var tb = (TextBox)d;
+            tb.CoerceValue(HorizontalScrollBarVisibilityProperty);
             if (tb._textViewHost != null)
             {
                 tb._textViewHost.View.OnTextWrappingChanged((TextWrapping)e.NewValue);
@@ -281,15 +291,25 @@ namespace Windows.UI.Xaml.Controls
                 nameof(HorizontalScrollBarVisibility),
                 typeof(ScrollBarVisibility),
                 typeof(TextBox),
-                new PropertyMetadata(ScrollBarVisibility.Hidden, OnHorizontalScrollBarVisibilityChanged));
+                new PropertyMetadata(ScrollBarVisibility.Hidden, OnHorizontalScrollBarVisibilityChanged, CoerceHorizontalScrollBarVisibility));
 
         private static void OnHorizontalScrollBarVisibilityChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             var tb = (TextBox)d;
-            if (tb._textViewHost != null)
+            if (tb._scrollViewer != null)
             {
-                tb._textViewHost.View.OnHorizontalScrollBarVisibilityChanged((ScrollBarVisibility)e.NewValue);
+                tb._scrollViewer.HorizontalScrollBarVisibility = (ScrollBarVisibility)e.NewValue;
             }
+        }
+
+        private static object CoerceHorizontalScrollBarVisibility(DependencyObject d, object baseValue)
+        {
+            var tb = (TextBox)d;
+            if (tb.TextWrapping == TextWrapping.Wrap)
+            {
+                return ScrollBarVisibility.Disabled;
+            }
+            return baseValue;
         }
 
         /// <summary>
@@ -314,9 +334,9 @@ namespace Windows.UI.Xaml.Controls
         private static void OnVerticalScrollBarVisibilityChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             var tb = (TextBox)d;
-            if (tb._textViewHost != null)
+            if (tb._scrollViewer != null)
             {
-                tb._textViewHost.View.OnVerticalScrollBarVisibilityChanged((ScrollBarVisibility)e.NewValue);
+                tb._scrollViewer.VerticalScrollBarVisibility = (ScrollBarVisibility)e.NewValue;
             }
         }
 
@@ -430,29 +450,60 @@ namespace Windows.UI.Xaml.Controls
 
             tb.UpdateVisualStates();
         }
+
+        /// <summary>
+        /// Gets or sets a value that specifies whether the <see cref="TextBox"/> input 
+        /// interacts with a spell check engine.
+        /// </summary>
+        /// <returns>
+        /// true if the <see cref="TextBox"/> input interacts with a spell check engine; 
+        /// otherwise, false. The default is false.
+        /// </returns>
+        public bool IsSpellCheckEnabled
+        {
+            get { return (bool)GetValue(IsSpellCheckEnabledProperty); }
+            set { SetValue(IsSpellCheckEnabledProperty, value); }
+        }
+
+        /// <summary>
+        /// Identifies the <see cref="IsSpellCheckEnabled"/> dependency property.
+        /// </summary>
+        public static readonly DependencyProperty IsSpellCheckEnabledProperty =
+            DependencyProperty.Register(
+                nameof(IsSpellCheckEnabled),
+                typeof(bool),
+                typeof(TextBox),
+                new PropertyMetadata(false, OnIsSpellCheckEnabledChanged));
+
+        private static void OnIsSpellCheckEnabledChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            var tb = (TextBox)d;
+            if (tb._textViewHost != null)
+            {
+                tb._textViewHost.View.OnIsSpellCheckEnabledChanged((bool)e.NewValue);
+            }
+        }
         
         public string SelectedText
         {
             get
             {
-                int selectionStartIndex; int selectionLength;
                 if (_textViewHost != null)
                 {
-                    _textViewHost.View.NEW_GET_SELECTION(out selectionStartIndex, out selectionLength);
+                    _textViewHost.View.NEW_GET_SELECTION(out int selectionStartIndex, out int selectionLength, out _);
                     return Text.Substring(selectionStartIndex, selectionLength);
                 }
 
-                return "";
+                return string.Empty;
             }
             set
             {
-                int selectionStartIndex; int selectionLength;
                 if (_textViewHost != null)
                 {
-                    _textViewHost.View.NEW_GET_SELECTION(out selectionStartIndex, out selectionLength);
-                    string text = this.Text.Substring(0, selectionStartIndex) + value + this.Text.Substring(selectionStartIndex + selectionLength);
+                    _textViewHost.View.NEW_GET_SELECTION(out int selectionStartIndex, out int selectionLength, out _);
+                    string text = Text.Substring(0, selectionStartIndex) + value + Text.Substring(selectionStartIndex + selectionLength);
                     _selectionIdxCache = selectionStartIndex + value.Length;
-                    this.Text = text;
+                    Text = text;
                     _selectionIdxCache = null;
                 }
             }
@@ -463,10 +514,9 @@ namespace Windows.UI.Xaml.Controls
         {
             get
             {
-                int selectionStartIndex; int selectionLength;
                 if (_textViewHost != null)
                 {
-                    _textViewHost.View.NEW_GET_SELECTION(out selectionStartIndex, out selectionLength);
+                    _textViewHost.View.NEW_GET_SELECTION(out int selectionStartIndex, out _, out _);
                     return selectionStartIndex;
                 }
 
@@ -479,10 +529,7 @@ namespace Windows.UI.Xaml.Controls
                     throw new ArgumentOutOfRangeException("SelectionStart cannot be lower than 0");
                 }
 
-                if (_textViewHost != null)
-                {
-                    _textViewHost.View.NEW_SET_SELECTION(value, value + SelectionLength);
-                }
+                _textViewHost?.View.NEW_SET_SELECTION(value, value + SelectionLength);
             }
         }
 
@@ -490,10 +537,9 @@ namespace Windows.UI.Xaml.Controls
         {
             get
             {
-                int selectionStartIndex; int selectionLength;
                 if (_textViewHost != null)
                 {
-                    _textViewHost.View.NEW_GET_SELECTION(out selectionStartIndex, out selectionLength);
+                    _textViewHost.View.NEW_GET_SELECTION(out _, out int selectionLength, out _);
                     return selectionLength;
                 }
 
@@ -506,10 +552,7 @@ namespace Windows.UI.Xaml.Controls
                     throw new ArgumentOutOfRangeException("SelectionLength cannot be lower than 0");
                 }
 
-                if (_textViewHost != null)
-                {
-                    _textViewHost.View.NEW_SET_SELECTION(SelectionStart, SelectionStart + value);
-                }
+                _textViewHost?.View.NEW_SET_SELECTION(SelectionStart, SelectionStart + value);
             }
         }
 
@@ -519,7 +562,10 @@ namespace Windows.UI.Xaml.Controls
             get
             {
                 if (_textViewHost != null)
-                    return _textViewHost.View.GetCaretPosition();
+                {
+                    _textViewHost.View.NEW_GET_SELECTION(out _, out _, out int caretIndex);
+                    return caretIndex;
+                }
 
                 return 0;
             }
@@ -555,25 +601,26 @@ namespace Windows.UI.Xaml.Controls
         {
             base.OnApplyTemplate();
 
+            _scrollViewer = null;
             if (_contentElement != null)
             {
                 ClearContentElement();
                 _contentElement = null;
             }
 
-            FrameworkElement contentElement = null;
-            int i = 0;
-            while (contentElement == null && i < TextAreaContainerNames.Length)
-            {
-                contentElement = GetTemplateChild(TextAreaContainerNames[i]) as FrameworkElement;
-                ++i;
-            }
+            FrameworkElement contentElement = GetTemplateChild(ContentElementName) as FrameworkElement
+                ?? GetTemplateChild(ContentElementName_WPF) as FrameworkElement;
 
             if (contentElement != null)
             {
+                _scrollViewer = contentElement as ScrollViewer;
+                InitializeScrollViewer();
+
                 _contentElement = contentElement;
                 InitializeContentElement();
             }
+
+            UpdateVisualStates();
         }
 
 #if MIGRATION
@@ -623,6 +670,33 @@ namespace Windows.UI.Xaml.Controls
         }
 
 #if MIGRATION
+        protected override void OnMouseEnter(MouseEventArgs e)
+#else
+        protected override void OnPointerEntered(PointerRoutedEventArgs e)
+#endif
+        {
+#if MIGRATION
+            base.OnMouseEnter(e);
+#else
+            base.OnPointerEntered(e);
+#endif
+            UpdateVisualStates();
+        }
+
+#if MIGRATION
+        protected override void OnMouseLeave(MouseEventArgs e)
+#else
+        protected override void OnPointerExited(PointerRoutedEventArgs e)
+#endif
+        {
+#if MIGRATION
+            base.OnMouseLeave(e);
+#else
+            base.OnPointerExited(e);
+#endif
+            UpdateVisualStates();
+        }
+
         protected override void OnKeyDown(KeyEventArgs e)
         {
             if (e.Handled)
@@ -630,166 +704,38 @@ namespace Windows.UI.Xaml.Controls
 
             base.OnKeyDown(e);
 
-#if CSHTML5BLAZOR
-            if (OpenSilver.Interop.IsRunningInTheSimulator_WorkAround)
-#else
-            if (OpenSilver.Interop.IsRunningInTheSimulator)
-#endif
-            {
-                // Not implemented for the simulator
-                return;
-            }
-
-            if (this.Text.Contains("\r") || this.Text.Contains("\n"))
-            {
-                // Not implemented for multiple text lines
-                return;
-            }
-
-            if (e.Key == Key.Left || e.Key == Key.Right)
-            {
-                if (e.KeyModifiers == ModifierKeys.None)
-                {
-                    if (SelectionLength > 0)
-                    {
-                        if (e.Key == Key.Left)
-                            Select(SelectionStart, 0);
-                        else
-                            Select(SelectionStart + SelectionLength, 0);
-
-                        e.Handled = true;
-                    }
-                    else
-                    {
-                        if (e.Key == Key.Left && SelectionStart > 0)
-                        {
-                            Select(SelectionStart - 1, 0);
-                            e.Handled = true;
-                        }
-                        else if (e.Key == Key.Right && SelectionStart < Text.Length)
-                        {
-                            Select(SelectionStart + 1, 0);
-                            e.Handled = true;
-                        }
-                    }
-                }
-                else if (e.KeyModifiers == ModifierKeys.Shift)
-                {
-                    int caret = CaretPosition;
-                    int selectionStartWithDirection = SelectionStart;
-                    int selectionEndWithDirection = SelectionStart + SelectionLength;
-
-                    if (caret != selectionEndWithDirection)
-                    {
-                        // Selection direction is backward
-                        int tmp = selectionEndWithDirection;
-                        selectionEndWithDirection = selectionStartWithDirection;
-                        selectionStartWithDirection = tmp;
-                    }
-
-                    if (e.Key == Key.Left && selectionEndWithDirection > 0)
-                    {
-                        selectionEndWithDirection--;
-                        
-                        Select(selectionStartWithDirection, selectionEndWithDirection - selectionStartWithDirection);
-                        
-                        e.Handled = true;
-                    }
-                    else if (e.Key == Key.Right && selectionEndWithDirection < Text.Length)
-                    {
-                        selectionEndWithDirection++;
-                        Select(selectionStartWithDirection, selectionEndWithDirection - selectionStartWithDirection);
-                        
-                        e.Handled = true;
-                    }
-                }
-                else if (e.KeyModifiers == ModifierKeys.Control)
-                {
-                    // Not implemented
-                }
-                else if (e.KeyModifiers == (ModifierKeys.Control | ModifierKeys.Shift))
-                {
-                    // Not implemented
-                }
-            }
-
-            if (e.Key == Key.Up || e.Key == Key.Down)
-            {
-                // Not implemented
-            }
+            HandleKeyDown(e);
         }
-#endif
+
         protected override void OnTextInput(TextCompositionEventArgs e)
         {
-            if (e.Handled)
-                return;
-
             base.OnTextInput(e);
 
-#if CSHTML5BLAZOR
-            if (OpenSilver.Interop.IsRunningInTheSimulator_WorkAround)
-#else
-            if (OpenSilver.Interop.IsRunningInTheSimulator)
-#endif
+            if (e.Handled)
             {
-                // Not implemented for the simulator
+                e.PreventDefault = true;
                 return;
             }
 
-            if (this.IsReadOnly)
-                return;
-
-            if (this.MaxLength != 0 && Text.Length - SelectionLength >= this.MaxLength)
-                return;
-
-            if (e.Text == "\r")
+            if (IsReadOnly ||
+                (!AcceptsReturn && (e.Text == "\r" || e.Text == "\n")) ||
+                (MaxLength != 0 && Text.Length - SelectionLength >= MaxLength))
             {
-                if (this.AcceptsReturn == false)
-                    return;
-
-                // Not implemented for multiple text lines
+                e.PreventDefault = true;
                 return;
             }
 
-            if (this.Text.Contains("\r") || this.Text.Contains("\n"))
-            {
-                // Not implemented for multiple text lines
-                return;
-            }
-
-            this.SelectedText = e.Text;
             e.Handled = true;
         }
-        internal void INTERNAL_CheckTextInputHandled(TextCompositionEventArgs e, object jsEventArg)
-        {
-#if CSHTML5BLAZOR
-            if (OpenSilver.Interop.IsRunningInTheSimulator_WorkAround)
-#else
-            if (OpenSilver.Interop.IsRunningInTheSimulator)
-#endif
-            {
-                // Not implemented for the simulator
-                return;
-            }
 
-            bool multiLines = this.Text.Contains("\r") || this.Text.Contains("\n");
-            bool requireNewLine = e.Text == "\r" && this.AcceptsReturn;
-            if (e.Handled == false && (requireNewLine || multiLines))
-            {
-                // Not implemented for multiple text lines
-                return;
-            }
-
-            OpenSilver.Interop.ExecuteJavaScript("$0.preventDefault()", jsEventArg);
-        }
-
-        internal void INTERNAL_TextUpdated()
+        internal sealed override void OnTextInputInternal()
         {
             if (_textViewHost != null)
             {
                 _isProcessingInput = true;
                 try
                 {
+                    _textViewHost.View.InvalidateMeasure();
                     SetCurrentValue(TextProperty, _textViewHost.View.GetText());
                 }
                 finally
@@ -797,6 +743,20 @@ namespace Windows.UI.Xaml.Controls
                     _isProcessingInput = false;
                 }
             }
+        }
+
+        protected override void OnGotFocus(RoutedEventArgs e)
+        {
+            base.OnGotFocus(e);
+            _isFocused = true;
+            UpdateVisualStates();
+        }
+
+        protected override void OnLostFocus(RoutedEventArgs e)
+        {
+            base.OnLostFocus(e);
+            _isFocused = false;
+            UpdateVisualStates();
         }
 
         /// <summary>
@@ -825,15 +785,38 @@ namespace Windows.UI.Xaml.Controls
         {
             if (!IsEnabled)
             {
-                GoToState(VisualStates.StateDisabled);
+                VisualStateManager.GoToState(this, VisualStates.StateDisabled, false);
             }
             else if (IsReadOnly)
             {
-                GoToState(VisualStates.StateReadOnly);
+                VisualStateManager.GoToState(this, VisualStates.StateReadOnly, false);
+            }
+            else if (IsPointerOver)
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateMouseOver, false);
             }
             else
             {
-                GoToState(VisualStates.StateNormal);
+                VisualStateManager.GoToState(this, VisualStates.StateNormal, false);
+            }
+
+            if (_isFocused)
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateFocused, false);
+            }
+            else
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateUnfocused, false);
+            }
+        }
+
+        private void InitializeScrollViewer()
+        {
+            if (_scrollViewer != null)
+            {
+                _scrollViewer.HorizontalScrollBarVisibility = HorizontalScrollBarVisibility;
+                _scrollViewer.VerticalScrollBarVisibility = VerticalScrollBarVisibility;
+                _scrollViewer.IsTabStop = false;
             }
         }
 
@@ -849,7 +832,6 @@ namespace Windows.UI.Xaml.Controls
             if (_textViewHost != null)
             {
                 TextBoxView view = CreateView();
-                view.Loaded += new RoutedEventHandler(OnViewLoaded);
 
                 _textViewHost.AttachView(view);
             }
@@ -859,21 +841,9 @@ namespace Windows.UI.Xaml.Controls
         {
             if (_textViewHost != null)
             {
-                _textViewHost.View.Loaded -= new RoutedEventHandler(OnViewLoaded);
-
                 _textViewHost.DetachView();
                 _textViewHost = null;
             }
-        }
-
-        private void OnViewLoaded(object sender, RoutedEventArgs e) 
-        {
-            if (!IsLoaded)
-            {
-                return;
-            }
-
-            UpdateTabIndex(IsTabStop, TabIndex);
         }
 
         internal static ITextBoxViewHost<T> GetContentHost<T>(FrameworkElement contentElement) where T : FrameworkElement, ITextBoxView

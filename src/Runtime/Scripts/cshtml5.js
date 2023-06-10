@@ -111,74 +111,9 @@ document.getAppParams = function () {
 
 document.ResXFiles = {};
 
-document.modifiersPressed = 0;
-
-document.refreshKeyModifiers = function (evt) {
-    var value = 0;
-    if (evt.ctrlKey) {
-        value = value | 1;
-    }
-    if (evt.altKey) {
-        value = value | 2;
-    }
-    if (evt.shiftKey) {
-        value = value | 4;
-    }
-    document.modifiersPressed = value;
-}
-
-_opensilver = {
-    mousePositionX: 0.0,
-    mousePositionY: 0.0
-};
-
-document.addEventListener('mousemove', function (e) {
-    _opensilver.mousePositionX = e.pageX;
-    _opensilver.mousePositionY = e.pageY;
-});
-
-document.onkeydown = function (evt) {
-    evt = evt || window.event;
-    document.refreshKeyModifiers(evt);
-};
-
-document.onkeyup = function (evt) {
-    evt = evt || window.event;
-    document.refreshKeyModifiers(evt);
-};
-
-document.jsObjRef = new Array();
+document.jsObjRef = {};
 document.callbackCounterForSimulator = 0;
 document.measureTextBlockElement = null;
-
-document.reroute = function reroute(e, elem, shiftKey) {
-    shiftKey = shiftKey || false;
-    if (e.rerouted === undefined) {
-        var evt;
-        if (typeof document.dispatchEvent !== 'undefined') {
-            evt = document.createEvent('MouseEvents');
-            evt.initMouseEvent(
-                e.type				// event type
-                , e.bubbles			// can bubble?
-                , e.cancelable		// cancelable?
-                , window			// the event's abstract view (should always be window)
-                , e.detail			// mouse click count (or event "detail")
-                , e.screenX			// event's screen x coordinate
-                , e.screenY			// event's screen y coordinate
-                , e.pageX			// event's client x coordinate
-                , e.pageY			// event's client y coordinate
-                , e.ctrlKey			// whether or not CTRL was pressed during event
-                , e.altKey			// whether or not ALT was pressed during event
-                , shiftKey			// whether or not SHIFT was pressed during event
-                , e.metaKey			// whether or not the meta key was pressed during event
-                , e.button			// indicates which button (if any) caused the mouse event (1 = primary button)
-                , e.relatedTarget	// relatedTarget (only applicable for mouseover/mouseout events)
-            );
-            evt.rerouted = true;
-            elem.dispatchEvent(evt);
-        }
-    }
-}
 
 document.performanceCounters = [];
 
@@ -209,20 +144,6 @@ document.getElementByIdSafe = function (id) {
     return element;
 }
 
-document.enableFocus = function (id) {
-    const element = document.getElementById(id);
-    if (!element) return;
-    element.onfocus = null;
-}
-
-document.disableFocus = function (id) {
-    const element = document.getElementById(id);
-    if (!element) return;
-    element.onfocus = function (e) {
-        e.target.blur();
-    };
-}
-
 document.setGridCollapsedDuetoHiddenColumn = function (id) {
     const element = document.getElementById(id);
     if (!element)
@@ -234,14 +155,6 @@ document.setGridCollapsedDuetoHiddenColumn = function (id) {
     }
 }
 
-document.setDisplayTableCell = function (id) {
-    const element = document.getElementById(id);
-    if (!element || element.tagName == 'SPAN')
-        return;
-
-    element.style.display = 'table-cell';
-}
-
 document.getActualWidthAndHeight = function (element) {
     return (typeof element === 'undefined' || element === null) ? '0|0' : element['offsetWidth'].toFixed(3) + '|' + element['offsetHeight'].toFixed(3);
 }
@@ -249,7 +162,8 @@ document.getActualWidthAndHeight = function (element) {
 document.createElementSafe = function (tagName, id, parentElement, index) {
     const newElement = document.createElement(tagName);
 
-    newElement.setAttribute("id", id);
+    newElement.setAttribute('id', id);
+    newElement.setAttribute('xamlid', id);
 
     if (typeof parentElement == 'string') {
         parentElement = document.getElementById(parentElement);
@@ -267,18 +181,50 @@ document.createElementSafe = function (tagName, id, parentElement, index) {
         var nextSibling = parentElement.children[index];
         parentElement.insertBefore(newElement, nextSibling);
     }
+
+    Object.defineProperty(newElement, 'dump', {
+        get() { return document.dumpProperties(id); }
+    });
+
     return newElement;
 }
 
-document.createTextBlockElement = function (id, parentElement, whiteSpace) {
+document.dumpProperties = function (id, ...names) {
+    if (DotNet && DotNet.invokeMethod) {
+        return DotNet.invokeMethod('OpenSilver', 'DumpProperties', id, names);
+    }
+    return null;
+};
+
+document.createTextBlockElement = function (id, parentElement, wrap) {
     const newElement = document.createElementSafe('div', id, parentElement, -1);
 
     if (newElement) {
-        newElement.style['whiteSpace'] = whiteSpace;
         newElement.style['overflow'] = 'hidden';
         newElement.style['textAlign'] = 'left';
         newElement.style['boxSizing'] = 'border-box';
+        if (wrap) {
+            newElement.style['overflowWrap'] = 'break-word';
+            newElement.style['whiteSpace'] = 'pre-wrap';
+        } else {
+            newElement.style['whiteSpace'] = 'pre';
+        }
     }
+}
+
+document.createPopupRootElement = function (id, rootElement, pointerEvents) {
+    if (!rootElement) return;
+
+    const popupRoot = document.createElement('div');
+    popupRoot.setAttribute('id', id);
+    popupRoot.setAttribute('xamlid', id);
+    popupRoot.style.position = 'absolute';
+    popupRoot.style.width = '100%';
+    popupRoot.style.height = '100%';
+    popupRoot.style.overflowX = 'hidden';
+    popupRoot.style.overflowY = 'hidden';
+    popupRoot.style.pointerEvents = pointerEvents;
+    rootElement.appendChild(popupRoot);
 }
 
 document.createCanvasElement = function (id, parentElement) {
@@ -291,30 +237,21 @@ document.createCanvasElement = function (id, parentElement) {
 }
 
 document.createImageElement = function (id, parentElement) {
-    const newElement = document.createElementSafe('img', id, parentElement, -1);
+    const img = document.createElementSafe('img', id, parentElement, -1);
 
-    if (newElement) {
-        newElement.setAttribute('src', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
-        // the text displayed when the image cannot be found.
-        // We set it as an empty string since there is nothing in Xaml
-        newElement.setAttribute('alt', ' ');
-
-        // this is to avoid a random few pixels wide gap below the image.
-        newElement.style['display'] = 'block';
-        // Defaulting to 0 because if there is no source set, we want the 
-        // 1x1 transparent placeholder image to be sure to take no space.
-        // If the source is set, it will then be set to "inherit"
-        newElement.style['width'] = '0';
-        newElement.style['height'] = '0';
-        newElement.style['objectPosition'] = 'center top';
-
-        newElement.addEventListener('mousedown', function (e) {
-            e.preventDefault();
-        }, false);
-        newElement.addEventListener('error', function (e) {
-            this.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-            this.style.width = 0;
-            this.style.height = 0;
+    if (img) {
+        img.setAttribute('alt', ' ');
+        img.style.display = 'none';
+        img.style.width = 'inherit';
+        img.style.height = 'inherit';
+        img.style.lineHeight = '0px';
+        img.style.objectFit = 'contain';
+        img.style.objectPosition = 'left top';
+        img.addEventListener('load', function (e) {
+            this.style.display = '';
+        })
+        img.addEventListener('error', function (e) {
+            this.style.display = 'none';
         });
     }
 }
@@ -332,13 +269,19 @@ document.createFrameworkElement = function (id, parentElement, enablePointerEven
     }
 }
 
-document.createRunElement = function (id, parentElement) {
-    const newElement = document.createElementSafe('span', id, parentElement, -1);
+document.createTextElement = function (id, tagName, parent) {
+    if (typeof parent === 'string') parent = document.getElementById(parent);
+    if (parent === null) return null;
 
-    if (newElement) {
-        newElement.style['textDecoration'] = 'inherit';
+    const textElement = document.createElement(tagName);
+    textElement.setAttribute('id', id);
+
+    if (index < 0 || index >= parent.children.length) {
+        parent.appendChild(textElement);
+    } else {
+        parent.insertBefore(textElement, parent.children[index]);
     }
-}
+};
 
 document.createShapeOuterElement = function (id, parentElement) {
     const newElement = document.createElementSafe('div', id, parentElement, -1);
@@ -433,82 +376,304 @@ document.addEventListenerSafe = function (element, method, func) {
             element.addEventListener(method, func);
         }
     }
-}
+};
 
-document._attachEventListeners = function (element, handler, isFocusable) {
-    const view = typeof element === 'string' ? document.getElementById(element) : element;
-    if (!view || view._eventsStore) return;
+document.setFocus = function (element) {
+    if (!element) return;
 
-    function bubblingEventHandler(e) {
-        if (!e.isHandled) {
-            e.isHandled = true;
-            handler(e);
+    setTimeout(function () {
+        element.setAttribute('tabindex', 0);
+        element.focus({ preventScroll: true });
+    });
+};
+
+document.createInputManager = function (root, callback) {
+    if (document.inputManager) return;
+
+    // This must remain synchronyzed with the EVENTS enum defined in InputManager.cs.
+    // Make sure to change both files if you update this !
+    const EVENTS = {
+        MOUSE_MOVE: 0,
+        MOUSE_LEFT_DOWN: 1,
+        MOUSE_LEFT_UP: 2,
+        MOUSE_RIGHT_DOWN: 3,
+        MOUSE_RIGHT_UP: 4,
+        MOUSE_ENTER: 5,
+        MOUSE_LEAVE: 6,
+        WHEEL: 7,
+        KEYDOWN: 8,
+        KEYUP: 9,
+        FOCUS: 10,
+        BLUR: 11,
+        KEYPRESS: 12,
+        INPUT: 13,
+        TOUCH_START: 14,
+        TOUCH_END: 15,
+        TOUCH_MOVE: 16,
+        WINDOW_BLUR: 17,
+    };
+
+    const MODIFIERKEYS = {
+        NONE: 0,
+        CONTROL: 1,
+        ALT: 2,
+        SHIFT: 4,
+        WINDOWS: 8,
+    };
+
+    let _modifiers = MODIFIERKEYS.NONE;
+    let _mouseCapture = null;
+    let _suppressContextMenu = false;
+    let _lastTouchEndTimeStamp = 0;
+
+    function setModifiers(e) {
+        _modifiers = MODIFIERKEYS.NONE;
+        if (e.ctrlKey)
+            _modifiers |= MODIFIERKEYS.CONTROL;
+        if (e.altKey)
+            _modifiers |= MODIFIERKEYS.ALT;
+        if (e.shiftKey)
+            _modifiers |= MODIFIERKEYS.SHIFT;
+        if (e.metaKey)
+            _modifiers |= MODIFIERKEYS.WINDOWS;
+    };
+
+    function getClosestElementId(element) {
+        while (element) {
+            if (element.hasAttribute('xamlid')) {
+                return element.getAttribute('xamlid');
+            }
+
+            element = element.parentElement;
         }
-    }
 
-    const store = view._eventsStore = {};
-    store.isFocusable = isFocusable;
+        return '';
+    };
 
-    view.addEventListener('mousedown', store['mousedown'] = bubblingEventHandler);
-    view.addEventListener('touchstart', store['touchstart'] = bubblingEventHandler, { passive: true });
-    view.addEventListener('mouseup', store['mouseup'] = bubblingEventHandler);
-    view.addEventListener('touchend', store['touchend'] = bubblingEventHandler);
-    view.addEventListener('mousemove', store['mousemove'] = bubblingEventHandler);
-    view.addEventListener('touchmove', store['touchmove'] = bubblingEventHandler, { passive: true });
-    view.addEventListener('wheel', store['wheel'] = bubblingEventHandler, { passive: true });
-    view.addEventListener('mouseenter', store['mouseenter'] = handler);
-    view.addEventListener('mouseleave', store['mouseleave'] = handler);
-    if (isFocusable) {
-        view.addEventListener('keypress', store['keypress'] = bubblingEventHandler);
-        view.addEventListener('input', store['input'] = bubblingEventHandler);
-        view.addEventListener('keydown', store['keydown'] = bubblingEventHandler);
-        view.addEventListener('keyup', store['keyup'] = bubblingEventHandler);
-        view.addEventListener('focusin', store['focusin'] = bubblingEventHandler);
-        view.addEventListener('focusout', store['focusout'] = bubblingEventHandler);
-    }
-}
+    function shouldIgnoreMouseEvent(e) {
+        return e.timeStamp - _lastTouchEndTimeStamp < 500;
+    };
 
-document._removeEventListeners = function (element) {
-    const view = typeof element === 'string' ? document.getElementById(element) : element;
-    if (!view || !view._eventsStore) return;
+    function initDom(root) {
 
-    const store = view._eventsStore;
-    view.removeEventListener('mousedown', store['mousedown']);
-    view.removeEventListener('touchstart', store['touchstart']);
-    view.removeEventListener('mouseup', store['mouseup']);
-    view.removeEventListener('touchend', store['touchend']);
-    view.removeEventListener('mousemove', store['mousemove']);
-    view.removeEventListener('touchmove', store['touchmove']);
-    view.removeEventListener('wheel', store['wheel']);
-    view.removeEventListener('mouseenter', store['mouseenter']);
-    view.removeEventListener('mouseleave', store['mouseleave']);
-    if (store.isFocusable) {
-        view.removeEventListener('keypress', store['keypress']);
-        view.removeEventListener('input', store['input']);
-        view.removeEventListener('keydown', store['keydown']);
-        view.removeEventListener('keyup', store['keyup']);
-        view.removeEventListener('focusin', store['focusin']);
-        view.removeEventListener('focusout', store['focusout']);
-    }
+        // Make sure the root div is keyboard focusable, so that we can tab into the app.
+        root.tabIndex = Math.max(root.tabIndex, 0);
 
-    delete view._eventsStore;
-}
+        document.addEventListener('mousedown', function (e) {
+            if (!e.isHandled) {
+                switch (e.button) {
+                    case 0:
+                        callback('', EVENTS.MOUSE_LEFT_DOWN, e);
+                        break;
+                    case 2:
+                        callback('', EVENTS.MOUSE_RIGHT_DOWN, e);
+                        break;
+                }
+            }
+        });
 
-document.eventCallback = function (callbackId, arguments, sync) {
-    const argsArray = arguments;
+        document.addEventListener('mouseup', function (e) {
+            if (!e.isHandled) {
+                const target = _mouseCapture;
+                if (target !== null) {
+                    switch (e.button) {
+                        case 0:
+                            callback(getClosestElementId(target), EVENTS.MOUSE_LEFT_UP, e);
+                            break;
+                        case 2:
+                            callback(getClosestElementId(target), EVENTS.MOUSE_RIGHT_UP, e);
+                            break;
+                    }
+                }
+            }
+        });
+
+        document.addEventListener('mousemove', function (e) {
+            if (!e.isHandled) {
+                const target = _mouseCapture;
+                if (target !== null) {
+                    callback(getClosestElementId(target), EVENTS.MOUSE_MOVE, e);
+                }
+            }
+        });
+
+        document.addEventListener('selectstart', function (e) { if (_mouseCapture !== null) e.preventDefault(); });
+
+        document.addEventListener('contextmenu', function (e) {
+            if (_suppressContextMenu ||
+                (_mouseCapture !== null && this !== _mouseCapture)) {
+                _suppressContextMenu = false;
+                e.preventDefault();
+            }
+        });
+
+        document.addEventListener('keydown', function (e) { setModifiers(e); });
+
+        document.addEventListener('keyup', function (e) { setModifiers(e); });        
+
+        window.addEventListener('blur', function (e) {
+            callback('', EVENTS.WINDOW_BLUR, e);
+            _modifiers = MODIFIERKEYS.NONE;
+        });
+
+        root.addEventListener('focusin', function (e) { callback(getClosestElementId(e.target), EVENTS.FOCUS, e); });
+
+        root.addEventListener('mousemove', function (e) {
+            if (shouldIgnoreMouseEvent(e)) return;
+
+            e.isHandled = true;
+            const target = _mouseCapture || e.target;
+            callback(getClosestElementId(target), EVENTS.MOUSE_MOVE, e);
+        });
+
+        root.addEventListener('wheel', function (e) {
+            e.isHandled = true;
+            callback(getClosestElementId(e.target), EVENTS.WHEEL, e);
+        });
+
+        root.addEventListener('mousedown', function (e) {
+            if (shouldIgnoreMouseEvent(e)) return;
+
+            e.isHandled = true;
+            let id = (_mouseCapture === null || e.target === _mouseCapture) ? getClosestElementId(e.target) : '';
+            switch (e.button) {
+                case 0:
+                    callback(id, EVENTS.MOUSE_LEFT_DOWN, e);
+                    break;
+                case 2:
+                    callback(id, EVENTS.MOUSE_RIGHT_DOWN, e);
+                    break;
+            }
+        });
+
+        root.addEventListener('mouseup', function (e) {
+            if (shouldIgnoreMouseEvent(e)) return;
+
+            e.isHandled = true;
+            const target = _mouseCapture || e.target;
+            switch (e.button) {
+                case 0:
+                    callback(getClosestElementId(target), EVENTS.MOUSE_LEFT_UP, e);
+                    break;
+                case 2:
+                    callback(getClosestElementId(target), EVENTS.MOUSE_RIGHT_UP, e);
+                    break;
+            }
+        });
+    };
+
+    initDom(root);
+
+    document.inputManager = {
+        addListeners: function (element, isFocusable) {
+            const view = typeof element === 'string' ? document.getElementById(element) : element;
+            if (!view) return;
+
+            view.addEventListener('mouseenter', function (e) {
+                if (_mouseCapture === null || this === _mouseCapture) {
+                    callback(getClosestElementId(this), EVENTS.MOUSE_ENTER, e);
+                }
+            });
+
+            view.addEventListener('mouseleave', function (e) {
+                if (_mouseCapture === null || this === _mouseCapture) {
+                    callback(getClosestElementId(this), EVENTS.MOUSE_LEAVE, e);
+                }
+            });
+
+            if (isTouchDevice()) {
+                view.addEventListener('touchstart', function (e) {
+                    if (!e.isHandled) {
+                        e.isHandled = true;
+                        callback(getClosestElementId(this), EVENTS.TOUCH_START, e);
+                    }
+                }, { passive: true });
+
+                view.addEventListener('touchend', function (e) {
+                    if (!e.isHandled) {
+                        e.isHandled = true;
+                        callback(getClosestElementId(this), EVENTS.TOUCH_END, e);
+                        _lastTouchEndTimeStamp = e.timeStamp;
+                    }
+                });
+
+                view.addEventListener('touchmove', function (e) {
+                    if (!e.isHandled) {
+                        e.isHandled = true;
+                        callback(getClosestElementId(this), EVENTS.TOUCH_MOVE, e);
+                    }
+                }, { passive: true });
+            }
+
+            if (isFocusable) {
+                view.addEventListener('keypress', function (e) {
+                    if (!e.isHandled) {
+                        e.isHandled = true;
+                        callback(getClosestElementId(this), EVENTS.KEYPRESS, e);
+                    }
+                });
+
+                view.addEventListener('input', function (e) {
+                    if (!e.isHandled) {
+                        e.isHandled = true;
+                        callback(getClosestElementId(this), EVENTS.INPUT, e);
+                    }
+                });
+
+                view.addEventListener('keydown', function (e) {
+                    if (!e.isHandled) {
+                        e.isHandled = true;
+                        setModifiers(e);
+                        callback(getClosestElementId(this), EVENTS.KEYDOWN, e);
+                    }
+                });
+
+                view.addEventListener('keyup', function (e) {
+                    if (!e.isHandled) {
+                        e.isHandled = true;
+                        setModifiers(e);
+                        callback(getClosestElementId(this), EVENTS.KEYUP, e);
+                    }
+                });
+            }
+        },
+        getModifiers: function () {
+            return _modifiers;
+        },
+        captureMouse: function (element) {
+            _mouseCapture = element;
+        },
+        releaseMouseCapture: function () {
+            _mouseCapture = null;
+        },
+        suppressContextMenu: function (value) {
+            _suppressContextMenu = value;
+        },
+    };
+};
+
+document.eventCallback = function (callbackId, args, sync) {
+    const argsArray = args;
     const idWhereCallbackArgsAreStored = "callback_args_" + document.callbackCounterForSimulator++;
     document.jsObjRef[idWhereCallbackArgsAreStored] = argsArray;
     if (sync) {
-        return window.onCallBack.OnCallbackFromJavaScript(callbackId, idWhereCallbackArgsAreStored, argsArray, true);
+        const v = window.onCallBack.OnCallbackFromJavaScript(callbackId, idWhereCallbackArgsAreStored, argsArray, true);
+        delete document.jsObjRef[idWhereCallbackArgsAreStored];
+        return v;
     } else {
         setTimeout(
             function () {
-                {
-                    window.onCallBack.OnCallbackFromJavaScript(callbackId, idWhereCallbackArgsAreStored, argsArray, false);
-                }
-            }
-            , 1);
+                window.onCallBack.OnCallbackFromJavaScript(callbackId, idWhereCallbackArgsAreStored, argsArray, false);
+            }, 1);
     }
+}
+
+document.getCallbackFunc = function (callbackId, sync, sliceArguments) {
+    return function () {
+        return document.eventCallback(callbackId,
+            (sliceArguments) ? Array.prototype.slice.call(arguments) : arguments,
+            sync);
+    };
 }
 
 document.callScriptSafe = function (referenceId, javaScriptToExecute, errorCallBackId) {
@@ -527,74 +692,6 @@ document.errorCallback = function (error, IndexOfNextUnmodifiedJSCallInList) {
     argsArr[1] = IndexOfNextUnmodifiedJSCallInList;
     document.jsObjRef[idWhereErrorCallbackArgsAreStored] = argsArr;
     window.onCallBack.OnCallbackFromJavaScriptError(idWhereErrorCallbackArgsAreStored);
-}
-
-document.rerouteMouseEvents = function (id) {
-    document.onmouseup = function (e) {
-        if (e.doNotReroute == undefined) {
-            var element = document.getElementById(id);
-            if (element) {
-                document.reroute(e, element);
-            }
-        }
-    }
-    document.onmouseover = function (e) {
-        if (e.doNotReroute == undefined) {
-            var element = document.getElementById(id);
-            if (element) {
-                document.reroute(e, element);
-            }
-        }
-    }
-    document.onmousedown = function (e) {
-        if (e.doNotReroute == undefined) {
-            var element = document.getElementById(id);
-            if (element) {
-                document.reroute(e, element);
-            }
-        }
-    }
-    document.onmouseout = function (e) {
-        if (e.doNotReroute == undefined) {
-            var element = document.getElementById(id);
-            if (element) {
-                document.reroute(e, element);
-            }
-        }
-    }
-    document.onmousemove = function (e) {
-        if (e.doNotReroute == undefined) {
-            var element = document.getElementById(id);
-            if (element) {
-                document.reroute(e, element);
-            }
-        }
-    }
-    document.onclick = function (e) {
-        if (e.doNotReroute == undefined) {
-            var element = document.getElementById(id);
-            if (element) {
-                document.reroute(e, element);
-            }
-        }
-    }
-    document.oncontextmenu = function (e) {
-        if (e.doNotReroute == undefined) {
-            var element = document.getElementById(id);
-            if (element) {
-                document.reroute(e, element);
-            }
-        }
-    }
-    document.ondblclick = function (e) {
-        if (e.doNotReroute == undefined) {
-            var element = document.getElementById(id);
-            if (element) {
-                document.reroute(e, element);
-            }
-        }
-    }
-    document.onselectstart = function (e) { return false; }
 }
 
 document.setVisualBounds = function (id, left, top, width, height, bSetAbsolutePosition, bSetZeroMargin, bSetZeroPadding) {
@@ -635,42 +732,34 @@ document.setPosition = function (id, left, top, bSetAbsolutePosition, bSetZeroMa
     }
 }
 
-document.measureTextBlock = function (uid, textWrapping, padding, width, maxWidth) {
+document.measureTextBlock = function (uid, whiteSpace, overflowWrap, padding, maxWidth, emptyVal) {
     var element = document.measureTextBlockElement;
     var elToMeasure = document.getElementById(uid);
     if (element && elToMeasure) {
         var computedStyle = getComputedStyle(elToMeasure);
 
-        var runElement = element.firstElementChild;
-        if (runElement != null) {
-            var child = elToMeasure;
-            if (child.hasChildNodes()) {
-                while (child.hasChildNodes()) {
-                    child = child.firstChild;
-                }
-                runElement.innerHTML = child.parentElement.innerHTML.length == 0 ? 'A' : child.parentElement.innerHTML;
-            } else {
-                runElement.innerHTML = 'A';
-            }
-        }
+        element.innerHTML = elToMeasure.innerHTML.length == 0 ? emptyVal : elToMeasure.innerHTML;
 
         element.style.fontSize = computedStyle.fontSize;
         element.style.fontWeight = computedStyle.fontWeight;
         element.style.fontFamily = computedStyle.fontFamily;
         element.style.fontStyle = computedStyle.fontStyle;
 
-        if (textWrapping.length > 0) {
-            element.style.whiteSpace = textWrapping;
-        }
+        if (whiteSpace.length > 0)
+            element.style.whiteSpace = whiteSpace;
+        element.style.overflowWrap = overflowWrap;
         if (padding.length > 0) {
             element.style.boxSizing = "border-box";
             element.style.padding = padding;
         }
 
-        element.style.width = width;
         element.style.maxWidth = maxWidth;
 
-        return element.offsetWidth + "|" + element.offsetHeight;
+        const size = element.offsetWidth + "|" + element.offsetHeight;
+
+        element.innerHTML = '';
+
+        return size;
     }
 
     return "0|0";
@@ -745,7 +834,7 @@ getTextAreaInnerText = function (domElement, forceNewLineFirst) {
         if (currentNode.nodeType == Node.TEXT_NODE) {
             if (currentNode.textContent != "") { //Note: we added this test because IE sometimes adds an empty text node which should not count for anything as far as I know.
                 if (forceNewLineFirst) {
-                    resultString += "\r\n";
+                    resultString += "\n";
                 }
                 var textToAdd = currentNode.textContent;
                 if (textToAdd.endsWith("\n")) {
@@ -757,7 +846,7 @@ getTextAreaInnerText = function (domElement, forceNewLineFirst) {
                         textToAdd = textToAdd.substring(0, textToAdd.length - 1);
                     }
                     //We also replace the '\n' with "\r\n":
-                    textToAdd = textToAdd.replace(new RegExp("\n", 'g'), "\r\n");
+                    textToAdd = textToAdd.replace(new RegExp("\n", 'g'), "\n");
                 }
                 resultString += textToAdd;
                 forceNewLineFirst = false;
@@ -767,19 +856,19 @@ getTextAreaInnerText = function (domElement, forceNewLineFirst) {
             var nodeName = currentNode.nodeName;
             if (nodeName == "BR") {
                 if (forceNewLineFirst) {
-                    resultString += "\r\n";
+                    resultString += "\n";
                 }
                 forceNewLineFirst = true;
             }
             else //we consider it's a <div> or a <p>:
             {
                 if (forceNewLineFirst) {
-                    resultString += "\r\n";
+                    resultString += "\n";
                     forceNewLineFirst = false;
                 }
-                if (currentNode.previousSibling != undefined && !resultString.endsWith("\r\n")) {
+                if (currentNode.previousSibling != undefined && !resultString.endsWith("\n")) {
                     //The element is not the first in its parent and there is no new line to put it, so we add one:
-                    resultString += "\r\n";
+                    resultString += "\n";
                 }
 
                 resultString += getTextAreaInnerText(currentNode, forceNewLineFirst);
@@ -795,98 +884,94 @@ getTextAreaInnerText = function (domElement, forceNewLineFirst) {
     return resultString;
 }
 
-
-//this counts the amount of characters before the ones (start and end) defined by the range object.
-// it does so by defining:
-//      -globalIndexes.startIndex and globalIndexes.endIndex: the indexes as in c# of the positions defined by the range
-//      -globalIndexes.isStartFound and globalIndexes.isEndFound: a boolean stating whether the index has been found yet ot not (used within this method to know when to stop changing the indexes).
-document.getRangeGlobalStartAndEndIndexes = function getRangeGlobalStartAndEndIndexes(currentParent, isFirstChild, charactersWentThrough, range, globalIndexes) {
-    //we go down the tree until we find multiple children or until there is no children left:
-    while (currentParent.hasChildNodes()) {
-        //a div/p/br tag means a new line if it is not the first child of its parent:
-        if (!isFirstChild && (currentParent.tagName == 'DIV' || currentParent.tagName == 'P' || currentParent.tagName == 'BR')) {
-            charactersWentThrough += 2; //corresponds to counting the characters for the new line (that are not otherwise included in the count)
-            isFirstChild = true;
-        }
-        //we stop as soon as we find an element that has more than one childNode, so we can go through all the children afterwards.
-        if (currentParent.childNodes.length > 1) {
-            break;
-        }
-        currentParent = currentParent.childNodes[0];
-    }
-    if (currentParent.hasChildNodes()) { //this being true means that we stopped in the previous loop because it had multiple children. We need to go through them for the count of characters:
-        var i = 0;
-        var amountOfChildren = currentParent.childNodes.length;
-        //recursively go through the children:
-        for (i = 0; i < amountOfChildren; ++i) {
-            var temp = currentParent.childNodes[i];
-            charactersWentThrough = getRangeGlobalStartAndEndIndexes(temp, i == 0, charactersWentThrough, range, globalIndexes);
-            if (globalIndexes.isStartFound && globalIndexes.isEndFound) {
+document.getTextBoxSelection = (function () {
+    //this counts the amount of characters before the ones (start and end) defined by the range object.
+    // it does so by defining:
+    //      -globalIndexes.startIndex and globalIndexes.endIndex: the indexes as in c# of the positions defined by the range
+    //      -globalIndexes.isStartFound and globalIndexes.isEndFound: a boolean stating whether the index has been found yet ot not (used within this method to know when to stop changing the indexes).
+    function getRangeGlobalStartAndEndIndexes(currentParent, isFirstChild, charactersWentThrough, selection, range, globalIndexes) {
+        //we go down the tree until we find multiple children or until there is no children left:
+        while (currentParent.hasChildNodes()) {
+            //a div/p/br tag means a new line if it is not the first child of its parent:
+            if (!isFirstChild && (currentParent.tagName == 'DIV' || currentParent.tagName == 'P' || currentParent.tagName == 'BR')) {
+                charactersWentThrough += 1; //corresponds to counting the characters for the new line (that are not otherwise included in the count)
+                isFirstChild = true;
+            }
+            //we stop as soon as we find an element that has more than one childNode, so we can go through all the children afterwards.
+            if (currentParent.childNodes.length > 1) {
                 break;
             }
+            currentParent = currentParent.childNodes[0];
         }
-    }
-    else {
-        //we stopped because we are at the end of a branch in the tree view --> count the characters in the line:
-        //if the end of the branch is a new line, count it:
-        if (!isFirstChild && (currentParent.tagName == 'DIV' || currentParent.tagName == 'P' || currentParent.tagName == 'BR')) {
-            charactersWentThrough += 2;
-        }
-        else {
-            if (currentParent.length) {
-                //we get the basic informations about the text:
-                var textContent = currentParent.textContent;
-                var splittedText = textContent.split("\n"); //this is to know if the piece of text contains one or more lines.
-                var firstText = splittedText[0];
-                var splittedLength = splittedText.length;
-                var needsCompensation = firstText[firstText.length - 1] != "\r"; //this allows to compensate the cases where new lines are written as "\n" only instead of "\r\n" (1 character instead of 2)
-                var wholeLength = textContent.length; //this will be the length of the whole text in this dom element, including possible compensation for the amount of characters used for a new line.
-                if (needsCompensation && splittedLength > 1) {
-                    wholeLength += splittedLength - 1;
+        if (currentParent.hasChildNodes()) { //this being true means that we stopped in the previous loop because it had multiple children. We need to go through them for the count of characters:
+            var i = 0;
+            var amountOfChildren = currentParent.childNodes.length;
+            //recursively go through the children:
+            for (i = 0; i < amountOfChildren; ++i) {
+                var temp = currentParent.childNodes[i];
+                charactersWentThrough = getRangeGlobalStartAndEndIndexes(temp, i == 0, charactersWentThrough, selection, range, globalIndexes);
+                if (globalIndexes.isCaretFound && globalIndexes.isStartFound && globalIndexes.isEndFound) {
+                    break;
                 }
-                if (currentParent == range.startContainer) {
-                    if (splittedText.length > 1 && needsCompensation) {
-                        //when we are at the element containing the position defined in the range and we need adjustments due to the new lines, count the amount of adjustments neede:
-                        var i = 0; //this will  be the amount of new lines before the given position.
-                        var actualLengthToRangeOffset = 0; //this is the length of the text as is in the browser.
-                        //go through the different lines of text while counting the characters and amount of new lines:
-                        for (i = 0; i < splittedLength; ++i) {
-                            if (actualLengthToRangeOffset + splittedText[i].length >= range.startOffset) {
-                                break;
-                            }
-                            actualLengthToRangeOffset += 1 + splittedText[i].length; //1 --> "\n" that was removed when splitting
-                        }
-                        globalIndexes.startIndex = charactersWentThrough + range.startOffset + i; //Note: + i because we count 1 additional character ('\r') per new line met before reaching the offset.
-                    }
-                    else { //if there is no need for compensation on the length taken by the new lines, simply add the offset defined in the range:
-                        globalIndexes.startIndex = charactersWentThrough + range.startOffset; //no need to compensate for a new line since it already is 2 characters or there is only one line.
-                    }
-                    //remember that the index was found:
-                    globalIndexes.isStartFound = true;
-                }
-                if (currentParent == range.endContainer) {
-                    if (splittedText.length > 1 && needsCompensation) {
-                        var i = 0;
-                        var actualLengthToRangeOffset = 0; //this is the length of the text as is in the browser.
-                        for (i = 0; i < splittedLength; ++i) {
-                            if (actualLengthToRangeOffset + splittedText[i].length >= range.endOffset) {
-                                break;
-                            }
-                            actualLengthToRangeOffset += 1 + splittedText[i].length; //1 --> \n that was removed
-                        }
-                        globalIndexes.endIndex = charactersWentThrough + range.endOffset + i; //Note: + i because we count 1 additional character ('\r') per new line met before reaching the offset.
-                    }
-                    else {
-                        globalIndexes.endIndex = charactersWentThrough + range.endOffset; //no need to compensate for a new line since it already is 2 characters or there is only one line.
-                    }
-                    globalIndexes.isEndFound = true;
-                }
-                charactersWentThrough += wholeLength; //move forward in the count of characters.
             }
+        } else {
+            //we stopped because we are at the end of a branch in the tree view --> count the characters in the line:
+            //if the end of the branch is a new line, count it:
+            if (!isFirstChild && (currentParent.tagName == 'DIV' || currentParent.tagName == 'P' || currentParent.tagName == 'BR')) {
+                charactersWentThrough += 1;
+            }
+            else {
+                if (currentParent.length) {
+                    //we get the basic informations about the text:
+                    var textContent = currentParent.textContent;
+                    var wholeLength = textContent.length;
+                    if (currentParent === selection.focusNode) {
+                        globalIndexes.caretIndex = charactersWentThrough + selection.focusOffset;
+                        globalIndexes.isCaretFound = true;
+                    }
+                    if (currentParent === range.startContainer) {
+                        globalIndexes.startIndex = charactersWentThrough + range.startOffset;
+                        globalIndexes.isStartFound = true;
+                    }
+                    if (currentParent === range.endContainer) {
+                        globalIndexes.endIndex = charactersWentThrough + range.endOffset;
+                        globalIndexes.isEndFound = true;
+                    }
+                    charactersWentThrough += wholeLength; //move forward in the count of characters.
+                } else {
+                    if (currentParent.tagName === 'BR') {
+                        if (currentParent.parentElement === selection.focusNode) {
+                            globalIndexes.caretIndex = charactersWentThrough;
+                            globalIndexes.isCaretFound = true;
+                        }
+                        if (currentParent.parentElement === range.startContainer) {
+                            globalIndexes.startIndex = charactersWentThrough;
+                            globalIndexes.isStartFound = true;
+                        }
+                        if (currentParent.parentElement === range.endContainer) {
+                            globalIndexes.endIndex = charactersWentThrough;
+                            globalIndexes.isEndFound = true;
+                        }
+                    }
+                }
+            }
+            return charactersWentThrough;
         }
-        return charactersWentThrough;
     }
-}
+
+    return function (element) {
+        const sel = window.getSelection();
+        const gi = {};
+        if (sel.rangeCount === 0) {
+            gi.caretIndex = 0;
+            gi.startIndex = 0;
+            gi.endIndex = 0;
+        } else {
+            getRangeGlobalStartAndEndIndexes(element, true, 0, sel, sel.getRangeAt(0), gi);
+        }
+        return JSON.stringify(gi);
+    }
+})();
 
 //this method goes through every branch of the visual tree starting from the given element and counts the characters until the given indexes are met.
 //It then fills nodesAndOffsets with the nodes and offsets to apply on the range defined in the calling method.
@@ -1019,17 +1104,6 @@ document.getRangeStartAndEnd = function getRangeStartAndEnd(currentParent, isFir
         }
     }
     return charactersWentThrough;
-}
-
-document.getCaretPosition = function getCaretCharacterOffsetWithin(element) {
-    var caretOffset = 0;
-    var sel = window.getSelection();
-    var range = sel.getRangeAt(0);
-    var preCaretRange = range.cloneRange();
-    preCaretRange.selectNodeContents(element);
-    preCaretRange.setEnd(sel.focusNode, sel.focusOffset);
-    caretOffset = preCaretRange.toString().length;
-    return caretOffset;
 }
 
 document.doesElementInheritDisplayNone = function getRangeStartAndEnd(domElement) {
@@ -1327,14 +1401,6 @@ if (!Array.from) {
 // INITIALIZE
 //------------------------------
 
-
-window.addEventListener('load', function () {
-    if (typeof FastClick !== 'undefined') {
-        new FastClick(document.body);
-    }
-}, false);
-
-
 var jsilConfig = {
     printStackTrace: false,
     libraryRoot: "Libraries/",
@@ -1371,3 +1437,312 @@ window.elementsFromPointOpensilver = function (x, y, element) {
 function PerformHitTest(x, y, rect) {
     return rect.x <= x && x <= rect.x + rect.width && rect.y <= y && y <= rect.y + rect.height;
 }
+
+//------------------------------
+// Just to check if client browser support touch
+//------------------------------
+const isTouchDevice = () => {
+    return (('ontouchstart' in window) ||
+        (navigator.maxTouchPoints > 0) ||
+        (navigator.msMaxTouchPoints > 0));
+}
+
+document.velocityHelpers = (function () {
+    const cache = {};
+
+    function addToCache(element, key) {
+        const id = element.id;
+        if (id in cache && !cache[id].includes(key)) {
+            cache[id].push(key);
+        } else {
+            cache[id] = [element, key];
+        }
+    }
+
+    function cleanupCache() {
+        const keys = Object.keys(cache);
+        keys.forEach((key) => {
+            const el = document.getElementById(key);
+            if (el === null) {
+                Velocity.Utilities.removeData(cache[key][0], cache[key].slice(1));
+                Velocity.Utilities.removeData(cache[key][0], ['velocity']);
+                delete cache[key];
+            }
+        });
+    }
+
+    setInterval(() => { cleanupCache(); }, 10000);
+
+    return {
+        setDomStyle: function (element, properties, value) {
+            const obj = {};
+            for (const property of properties.split(',')) {
+                obj[property] = value;
+            }
+
+            Velocity(element, obj, { duration: 1, queue: false });
+            addToCache(element, 'velocity');
+        },
+
+        animate: function (element, fromToValues, options, groupName) {
+            Velocity(element, fromToValues, options);
+            Velocity.Utilities.dequeue(element, groupName);
+            addToCache(element, `${groupName}queue`);
+        }
+    };
+})();
+
+document.browserService = (function () {
+    const JSTYPE = {
+        ERROR: -1,
+        VOID: 0,
+        STRING: 1,
+        INTEGER: 2,
+        DOUBLE: 3,
+        BOOLEAN: 4,
+        OBJECT: 5,
+        HTMLELEMENT: 6,
+        HTMLCOLLECTION: 7,
+        HTMLDOCUMENT: 8,
+        HTMLWINDOW: 9,
+    };
+
+    const INTEROP_RESULT = {
+        ERROR: 0,
+        VOID: 1,
+        OBJECT: 2,
+        MEMBER: 3,
+    };
+
+    let _id = 0;
+    const _idToObj = new Map();
+    const _objToId = new Map();
+
+    let _isInitialized = false;
+    let _getMemberCallback = null;
+    let _setPropertyCallback = null;
+    let _invokeMethodCallback = null;
+    let _addEventListenerCallback = null;
+
+    function checkInitialized() {
+        if (!_isInitialized) {
+            throw new Error('browserService has not been initialized yet.');
+        }
+    };
+
+    function createManagedObject(id, isDelegate) {
+        const o = isDelegate ? function () { } : {};
+        o.id = id;
+        Object.defineProperty(o, 'id', { writable: false });
+
+        const handler = {
+            get: function (target, prop, receiver) {
+                switch (prop) {
+                    case 'addEventListener':
+                        return function (event, handler) {
+                            const r = addDotNetEventListener(target, event, JSON.stringify(conv(handler)));
+                            switch (r.type) {
+                                case INTEROP_RESULT.ERROR:
+                                    throw new Error(r.value);
+                            }
+                        };
+                    case 'removeEventListener':
+                        return function (event, handler) {
+                            const r = removeDotNetEventListener(target, event, JSON.stringify(conv(handler)));
+                            switch (r.type) {
+                                case INTEROP_RESULT.ERROR:
+                                    throw new Error(r.value);
+                            }
+                        };
+                    default:
+                        const r = getDotNetMember(target, prop);
+                        switch (r.type) {
+                            case INTEROP_RESULT.ERROR:
+                                throw new Error(r.value);
+                            case INTEROP_RESULT.OBJECT:
+                                return r.value;
+                            case INTEROP_RESULT.MEMBER:
+                                return function (...args) {
+                                    const r = invokeDotNetMethod(target, prop, JSON.stringify(args.map(function (x) { return conv(x); })));
+                                    switch (r.type) {
+                                        case INTEROP_RESULT.ERROR:
+                                            throw new Error(r.value);
+                                        case INTEROP_RESULT.OBJECT:
+                                            return r.value;
+                                    }
+                                };
+                        }
+                }
+            },
+            set: function (target, prop, value, receiver) {
+                const r = setDotNetProperty(target, prop, JSON.stringify(conv(value)));
+                switch (r.type) {
+                    case INTEROP_RESULT.ERROR:
+                        throw new Error(r.value);
+                }
+                return true;
+            },
+        };
+
+        if (isDelegate) {
+            handler.apply = function (target, thisArg, argumentsList) {
+                const r = invokeDotNetMethod(target, '', JSON.stringify(argumentsList.map(function (x) { return conv(x); })));
+                switch (r.type) {
+                    case INTEROP_RESULT.ERROR:
+                        throw new Error(r.value);
+                    case INTEROP_RESULT.OBJECT:
+                        return r.value;
+                }
+            };
+        }
+
+        return new Proxy(o, handler);
+    };
+
+    function getDotNetMember(managedObject, name) {
+        const str_result = _getMemberCallback(managedObject.id, name);
+        return eval(str_result);
+    };
+
+    function invokeDotNetMethod(managedObject, name, args) {
+        const str_result = _invokeMethodCallback(managedObject.id, name, args);
+        return eval(str_result);
+    };
+
+    function setDotNetProperty(managedObject, name, value) {
+        const str_result = _setPropertyCallback(managedObject.id, name, value);
+        return eval(str_result);
+    };
+
+    function addDotNetEventListener(managedObject, event, handler) {
+        const str_result = _addEventListenerCallback(managedObject.id, event, handler, true);
+        return eval(str_result);
+    };
+
+    function removeDotNetEventListener(managedObject, event, handler) {
+        const str_result = _addEventListenerCallback(managedObject.id, event, handler, false);
+        return eval(str_result);
+    };
+
+    function getOrCreateId(obj) {
+        if (!_objToId.has(obj)) {
+            const id = (_id++).toString();
+            _objToId.set(obj, id);
+            _idToObj.set(id, obj);
+        }
+
+        return _objToId.get(obj);
+    };
+
+    function isDOMCollection(v) {
+        return v instanceof HTMLCollection || v instanceof NodeList;
+    };
+
+    function conv(v) {
+        if (v instanceof Document) {
+            return { Type: JSTYPE.HTMLDOCUMENT };
+        } else if (v instanceof Window) {
+            return { Type: JSTYPE.HTMLWINDOW };
+        } else if (v instanceof HTMLElement) {
+            return { Type: JSTYPE.HTMLELEMENT, Value: getOrCreateId(v) };
+        } else if (isDOMCollection(v)) {
+            return { Type: JSTYPE.HTMLCOLLECTION, Value: getOrCreateId(v) };
+        } else if (typeof v === 'number') {
+            if (Number.isInteger(v))
+                return { Type: JSTYPE.INTEGER, Value: v.toString() };
+            else
+                return { Type: JSTYPE.DOUBLE, Value: v.toString() };
+        } else if (typeof v === 'string') {
+            return { Type: JSTYPE.STRING, Value: v };
+        } else if (typeof v === 'boolean') {
+            return { Type: JSTYPE.BOOLEAN, Value: v.toString() };
+        } else if (v === null || v === undefined) {
+            return { Type: JSTYPE.VOID };
+        } else if (typeof v === 'object' || typeof v === 'function') {
+            return { Type: JSTYPE.OBJECT, Value: getOrCreateId(v) };
+        } else {
+            return { Type: JSTYPE.ERROR, Value: 'An unexpected error occurred' };
+        }
+    };
+
+    function error(message) {
+        return { Type: JSTYPE.ERROR, Value: message };
+    };
+
+    return {
+        initialize: function (getMemberCallback, setPropertyCallback, invokeMethodCallback, addEventListenerCallback) {
+            if (_isInitialized) {
+                throw new Error('browserService can only be initialized once.');
+            }
+            _isInitialized = true;
+            _getMemberCallback = getMemberCallback;
+            _setPropertyCallback = setPropertyCallback;
+            _invokeMethodCallback = invokeMethodCallback;
+            _addEventListenerCallback = addEventListenerCallback;
+        },
+        invoke: function (instance, name, ...args) {
+            checkInitialized();
+            const m = instance[name];
+            if (m) {
+                try {
+                    const r = m.call(instance, ...args);
+                    return JSON.stringify(conv(r));
+                } catch (err) {
+                    return JSON.stringify(error(err.message));
+                }
+            } else {
+                return JSON.stringify(error(`The method '${name}' is not defined.`));
+            }
+        },
+        invokeSelf: function (f, ...args) {
+            checkInitialized();
+            if (typeof f === 'function') {
+                try {
+                    const r = f.call(null, ...args);
+                    return JSON.stringify(conv(r));
+                } catch (err) {
+                    return JSON.stringify(error(err.message));
+                }
+            } else {
+                return JSON.stringify(error("'InvokeSelf' can only be called on a 'function'."));
+            }
+        },
+        getProperty: function (instance, name) {
+            checkInitialized();
+            try {
+                return JSON.stringify(conv(instance[name]));
+            } catch (err) {
+                return JSON.stringify(error(err.message));
+            }
+        },
+        setProperty: function (instance, name, value) {
+            checkInitialized();
+            try {
+                instance[name] = value;
+                return JSON.stringify(conv(undefined));
+            } catch (err) {
+                return JSON.stringify(error(err.message));
+            }
+        },
+        getObject: function (id) {
+            checkInitialized();
+            return _idToObj.get(id);
+        },
+        releaseObject: function (id) {
+            checkInitialized();
+            if (_idToObj.has(id)) {
+                const o = _idToObj.get(id);
+                _objToId.delete(o);
+                _idToObj.delete(id);
+            }
+        },
+        registerManagedObject: function (isDelegate) {
+            checkInitialized();
+            const id = (_id++).toString();
+            const managedObject = createManagedObject(id, isDelegate);
+            _objToId.set(managedObject, id);
+            _idToObj.set(id, managedObject);
+            return id;
+        },
+    };
+})();

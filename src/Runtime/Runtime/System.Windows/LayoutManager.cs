@@ -15,7 +15,7 @@ namespace System.Windows
 namespace Windows.UI.Xaml
 #endif
 {
-    internal class LayoutManager
+    internal sealed class LayoutManager
     {
         public static readonly LayoutManager Current = new LayoutManager();
 
@@ -23,6 +23,7 @@ namespace Windows.UI.Xaml
         private HashSet<UIElement> arrangeQueue;
         private HashSet<UIElement> updatedElements;
 
+        private bool _updateInProgress;
         private object queueLock = new object();
         private object updatedElementsLock = new object();
 
@@ -116,15 +117,18 @@ namespace Windows.UI.Xaml
             if (updateLayoutOperation == null || updateLayoutOperation.Status == DispatcherOperationStatus.Completed)
             {
 #if MIGRATION
-                updateLayoutOperation = Dispatcher.INTERNAL_GetCurrentDispatcher().InvokeAsync(UpdateLayout, DispatcherPriority.Render);
+                updateLayoutOperation = Dispatcher.CurrentDispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
 #else
-                updateLayoutOperation = CoreDispatcher.INTERNAL_GetCurrentDispatcher().InvokeAsync(UpdateLayout, DispatcherPriority.Render);
+                updateLayoutOperation = CoreDispatcher.CurrentDispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
 #endif
             }
         }
 
         public void UpdateLayout()
         {
+            if (_updateInProgress) return;
+
+            _updateInProgress = true;
             while (measureQueue.Count > 0 || arrangeQueue.Count > 0)
             {
                 while (measureQueue.Count > 0)
@@ -165,30 +169,7 @@ namespace Windows.UI.Xaml
                     element.RaiseLayoutUpdated();
                 }
             }
-        }
-
-        public bool CheckChildMeasureValidation(UIElement parent)
-        {
-            lock (queueLock)
-            {
-                int visualLevelParent = parent.VisualLevel;
-                foreach (UIElement element in measureQueue)
-                {
-                    UIElement elIterator = element;
-                    while (elIterator != null)
-                    {
-                        if (elIterator.VisualLevel <= visualLevelParent)
-                            break;
-
-                        elIterator = (UIElement)elIterator.INTERNAL_VisualParent;
-                        if (elIterator == parent)
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-            return false;
+            _updateInProgress = false;
         }
 
         private UIElement GetTopElement(IEnumerable<UIElement> measureQueue)

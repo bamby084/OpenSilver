@@ -1,5 +1,4 @@
 ﻿
-
 /*===================================================================================
 * 
 *   Copyright (c) Userware/OpenSilver.net
@@ -12,10 +11,9 @@
 *  
 \*====================================================================================*/
 
-
-using DotNetForHtml5.Core;
 using System;
-using System.Threading.Tasks;
+using System.Diagnostics;
+using OpenSilver.Internal;
 
 #if MIGRATION
 using System.Windows.Automation.Peers;
@@ -25,6 +23,8 @@ using System.Windows.Input;
 using Windows.UI.Xaml.Automation.Peers;
 using Windows.UI.Xaml.Controls.Primitives;
 using Windows.UI.Xaml.Input;
+using KeyEventArgs = Windows.UI.Xaml.Input.KeyRoutedEventArgs;
+using Key = Windows.System.VirtualKey;
 #endif
 
 #if MIGRATION
@@ -42,25 +42,29 @@ namespace Windows.UI.Xaml.Controls
     [TemplatePart(Name = "ContentPresenterBorder", Type = typeof(FrameworkElement))]
     [TemplatePart(Name = "DropDownToggle", Type = typeof(ToggleButton))]
     [TemplatePart(Name = "ScrollViewer", Type = typeof(ScrollViewer))]
-    [TemplateVisualState(Name = "InvalidUnfocused", GroupName = "ValidationStates")]
-    [TemplateVisualState(Name = "InvalidFocused", GroupName = "ValidationStates")]
-    [TemplateVisualState(Name = "Normal", GroupName = "CommonStates")]
-    [TemplateVisualState(Name = "MouseOver", GroupName = "CommonStates")]
-    [TemplateVisualState(Name = "Disabled", GroupName = "CommonStates")]
-    [TemplateVisualState(Name = "Unfocused", GroupName = "FocusStates")]
-    [TemplateVisualState(Name = "Focused", GroupName = "FocusStates")]
-    [TemplateVisualState(Name = "FocusedDropDown", GroupName = "FocusStates")]
-    [TemplateVisualState(Name = "Valid", GroupName = "ValidationStates")]
+    [TemplateVisualState(Name = VisualStates.StateValid, GroupName = VisualStates.GroupValidation)]
+    [TemplateVisualState(Name = VisualStates.StateInvalidUnfocused, GroupName = VisualStates.GroupValidation)]
+    [TemplateVisualState(Name = VisualStates.StateInvalidFocused, GroupName = VisualStates.GroupValidation)]
+    [TemplateVisualState(Name = VisualStates.StateNormal, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateMouseOver, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateDisabled, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateUnfocused, GroupName = VisualStates.GroupFocus)]
+    [TemplateVisualState(Name = VisualStates.StateFocused, GroupName = VisualStates.GroupFocus)]
+    [TemplateVisualState(Name = FocusedDropDownState, GroupName = VisualStates.GroupFocus)]
     public class ComboBox : Selector
     {
+        private const string FocusedDropDownState = "FocusedDropDown";
+
         private Popup _popup;
         private UIElement _popupChild;
         private ToggleButton _dropDownToggle;
         private ContentPresenter _contentPresenter;
         private FrameworkElement _emptyContent;
-        private bool _suppressCloseOnOutsideClick;
+        private ScrollViewer _scrollHost;
+        private bool _isMouseOver;
+        private bool _isFocused;
 
-        [Obsolete("ComboBox does not support Native ComboBox. Use 'CSHTML5.Native.Html.Controls.NativeComboBox' instead.")]
+        [Obsolete(Helper.ObsoleteMemberMessage + " Use 'CSHTML5.Native.Html.Controls.NativeComboBox' instead.")]
         public bool UseNativeComboBox
         {
             get { return false; }
@@ -72,8 +76,21 @@ namespace Windows.UI.Xaml.Controls
         /// </summary>
         public ComboBox()
         {
-            this.DefaultStyleKey = typeof(ComboBox);
+            DefaultStyleKey = typeof(ComboBox);
+            IsEnabledChanged += (o, e) =>
+            {
+                if (!(bool)e.NewValue)
+                {
+                    _isMouseOver = false;
+                }
+
+                UpdateVisualStates();
+            };
         }
+
+        internal sealed override bool HandlesScrolling => true;
+
+        internal sealed override ScrollViewer ScrollHost => _scrollHost;
 
         protected override DependencyObject GetContainerForItemOverride()
         {
@@ -85,13 +102,13 @@ namespace Windows.UI.Xaml.Controls
             return (item is ComboBoxItem);
         }
 
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         protected override SelectorItem INTERNAL_GenerateContainer(object item)
         {
             return (SelectorItem)this.GetContainerFromItem(item);
         }
 
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         protected override DependencyObject GetContainerFromItem(object item)
         {
             ComboBoxItem comboBoxItem = item as ComboBoxItem ?? new ComboBoxItem();
@@ -106,7 +123,7 @@ namespace Windows.UI.Xaml.Controls
             DataTemplate selectionBoxItemTemplate;
 
             int index = SelectedIndex;
-            if (index == -1 || (IsDropDownOpen && SelectedItem is FrameworkElement))
+            if (index <= -1 || (IsDropDownOpen && SelectedItem is FrameworkElement))
             {
                 content = _emptyContent;
                 selectionBoxItem = null;
@@ -152,47 +169,54 @@ namespace Windows.UI.Xaml.Controls
         protected override void OnApplyTemplate()
 #endif
         {
-            base.OnApplyTemplate();
-
             if (_popup != null)
             {
                 _popup.PlacementTarget = null;
-                _popup.OutsideClick -= OnOutsideClick;
-                _popup.ClosedDueToOutsideClick -= Popup_ClosedDueToOutsideClick; // Note: we do this here rather than at "OnDetached" because it may happen that the popup is closed after the ComboBox has been removed from the visual tree (in which case, when putting it back into the visual tree, we want the drop down to be in its initial closed state).
+                _popup.OutsideClick -= new EventHandler<OutsideClickEventArgs>(OnOutsideClick);
             }
 
             if (_popupChild != null)
             {
+                if (_popupChild is FrameworkElement fe)
+                    fe.SizeChanged -= new SizeChangedEventHandler(OnPopupChildSizeChanged);
+                _popupChild.KeyDown -= new KeyEventHandler(OnPopupKeyDown);
                 _popupChild.TextInput -= new TextCompositionEventHandler(OnPopupTextInput);
                 _popupChild = null;
             }
 
+            // _scrollHost must be set before calling base
+            _scrollHost = GetTemplateChild("ScrollViewer") as ScrollViewer;
+
+            base.OnApplyTemplate();
+
             _popup = GetTemplateChild("Popup") as Popup;
-          
+
             //this will enable virtualization in combo box without templating the whole style
             if (_popup != null)
             {
                 //reason for following if condition is backward compatibility, till now we had to define template and manually set custom layout of popup to true
                 //and thus we don't need to set custom layout for combo box to make this work.
-                if (this.CustomLayout)
+                if (UseCustomLayout)
                 {
                     _popup.CustomLayout = true;
                 }
-                _popup.MaxHeight = this.MaxDropDownHeight;
-                
+                _popup.MaxHeight = MaxDropDownHeight;
+
                 //todo: once we will have made the following properties (PlacementTarget and Placement) Dependencyproperties, unset it here and set it in the default style.
                 _popup.PlacementTarget = this;
                 _popup.Placement = PlacementMode.Bottom;
-                _popup.INTERNAL_PopupMoved += _popup_INTERNAL_PopupMoved;
+                _popup.StaysWithinScreenBounds = true;
 
                 // Make sure the popup gets closed when the user clicks outside the combo box, and listen to the Closed event in order to update the drop-down toggle:
                 _popup.StayOpen = false;
-                _popup.OutsideClick += OnOutsideClick;
-                _popup.ClosedDueToOutsideClick += Popup_ClosedDueToOutsideClick;
+                _popup.OutsideClick += new EventHandler<OutsideClickEventArgs>(OnOutsideClick);
 
                 _popupChild = _popup.Child;
                 if (_popupChild != null)
                 {
+                    if (_popupChild is FrameworkElement fe)
+                        fe.SizeChanged += new SizeChangedEventHandler(OnPopupChildSizeChanged);
+                    _popupChild.KeyDown += new KeyEventHandler(OnPopupKeyDown);
                     _popupChild.TextInput += new TextCompositionEventHandler(OnPopupTextInput);
                 }
             }
@@ -206,17 +230,167 @@ namespace Windows.UI.Xaml.Controls
                 }
 
                 _emptyContent = _contentPresenter.Content as FrameworkElement;
+                _contentPresenter.ClipToBounds = true;
             }
 
             _dropDownToggle = GetTemplateChild("DropDownToggle") as ToggleButton;
             if (_dropDownToggle != null)
             {
-                _dropDownToggle.Checked += DropDownToggle_Checked;
-                _dropDownToggle.Unchecked += DropDownToggle_Unchecked;
+                _dropDownToggle.Click += new RoutedEventHandler(OnDropDownToggleClick);
             }
 
             UpdatePresenter();
+            UpdateVisualStates();
         }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+
+            if (e.Handled)
+            {
+                return;
+            }
+
+            if (IsDropDownOpen)
+            {
+                HandlePopupKeyDown(e);
+            }
+            else
+            {
+                HandleComboBoxKeyDown(e);
+            }
+        }
+
+        private void HandlePopupKeyDown(KeyEventArgs e)
+        {
+            bool handled = false;
+            int newFocusedIndex = -1;
+            switch (e.Key)
+            {
+                case Key.Enter:
+                    KeyboardCloseDropDown(true);
+                    break;
+                case Key.Escape:
+                    KeyboardCloseDropDown(false);
+                    break;
+                case Key.Home:
+                    newFocusedIndex = NavigateToStart();
+                    break;
+                case Key.End:
+                    newFocusedIndex = NavigateToEnd();
+                    break;
+                case Key.PageUp:
+                    newFocusedIndex = NavigateByPage(false);
+                    break;
+                case Key.PageDown:
+                    newFocusedIndex = NavigateByPage(true);
+                    break;
+                case Key.Left:
+                    if (IsVerticalOrientation())
+                    {
+                        ElementScrollViewerScrollInDirection(Key.Left);
+                    }
+                    else
+                    {
+                        newFocusedIndex = NavigateByLine(false);
+                    }
+                    break;
+                case Key.Up:
+                    if (IsVerticalOrientation())
+                    {
+                        newFocusedIndex = NavigateByLine(false);
+                    }
+                    else
+                    {
+                        ElementScrollViewerScrollInDirection(Key.Up);
+                    }
+                    break;
+                case Key.Right:
+                    if (IsVerticalOrientation())
+                    {
+                        ElementScrollViewerScrollInDirection(Key.Right);
+                    }
+                    else
+                    {
+                        newFocusedIndex = NavigateByLine(true);
+                    }
+                    break;
+                case Key.Down:
+                    if (IsVerticalOrientation())
+                    {
+                        newFocusedIndex = NavigateByLine(true);
+                    }
+                    else
+                    {
+                        ElementScrollViewerScrollInDirection(Key.Down);
+                    }
+                    break;
+                default:
+                    Debug.Assert(!handled);
+                    break;
+            }
+
+            if (newFocusedIndex >= 0 && newFocusedIndex < Items.Count)
+            {
+                FocusItemInternal(newFocusedIndex);
+                handled = true;
+            }
+
+            if (handled)
+            {
+                e.Handled = true;
+            }
+        }
+
+        private void HandleComboBoxKeyDown(KeyEventArgs e)
+        {
+            bool handled = false;
+            int newSelectedIndex = -1;
+            switch (e.Key)
+            {
+                case Key.Enter:
+                    IsDropDownOpen = true;
+                    handled = true;
+                    break;
+                case Key.End:
+                    SelectedIndex = Items.Count - 1;
+                    break;
+                case Key.Home:
+                    newSelectedIndex = 0;
+                    break;
+                case Key.Up:
+                case Key.Left:
+                    if ((!IsVerticalOrientation() || e.Key == Key.Up) && SelectedIndex >= 0)
+                    {
+                        newSelectedIndex = GetNextSelectableIndex(SelectedIndex - 1, -1, -1);
+                    }
+                    break;
+                case Key.Down:
+                case Key.Right:
+                    if ((!IsVerticalOrientation() || e.Key == Key.Down) && SelectedIndex < Items.Count)
+                    {
+                        newSelectedIndex = GetNextSelectableIndex(SelectedIndex + 1, 1, Items.Count);
+                    }
+                    break;
+                default:
+                    Debug.Assert(!handled);
+                    break;
+            }
+
+            if (newSelectedIndex >= 0 && newSelectedIndex < Items.Count)
+            {
+                SelectionChange.SelectJustThisItem(ItemInfoFromIndex(newSelectedIndex), true);
+                handled = true;
+            }
+
+            if (handled)
+            {
+                e.Handled = true;
+            }
+        }
+
+        private void OnPopupKeyDown(object sender, KeyEventArgs e) => OnKeyDown(e);
 
         /// <summary>
         /// Provides handling for the <see cref="UIElement.MouseLeftButtonDown"/> event
@@ -245,8 +419,77 @@ namespace Windows.UI.Xaml.Controls
 
             e.Handled = true;
 
-            _suppressCloseOnOutsideClick = true;
             IsDropDownOpen = true;
+        }
+
+        /// <summary>
+        /// Provides handling for the <see cref="UIElement.MouseEnter"/> event that occurs
+        /// when the mouse pointer enters this control.
+        /// </summary>
+        /// <param name="e">
+        /// The event data.
+        /// </param>
+#if MIGRATION
+        protected override void OnMouseEnter(MouseEventArgs e)
+#else
+        protected override void OnPointerEntered(PointerRoutedEventArgs e)
+#endif
+        {
+#if MIGRATION
+            base.OnMouseEnter(e);
+#else
+            base.OnPointerEntered(e);
+#endif
+            _isMouseOver = true;
+            UpdateVisualStates();
+        }
+
+        /// <summary>
+        /// Provides handling for the <see cref="UIElement.MouseLeave"/> event that occurs
+        /// when the mouse pointer leaves the combo box.
+        /// </summary>
+        /// <param name="e">
+        /// The event data.
+        /// </param>
+#if MIGRATION
+        protected override void OnMouseLeave(MouseEventArgs e)
+#else
+        protected override void OnPointerReleased(PointerRoutedEventArgs e)
+#endif
+        {
+#if MIGRATION
+            base.OnMouseLeave(e);
+#else
+            base.OnPointerReleased(e);
+#endif
+            _isMouseOver = false;
+            UpdateVisualStates();
+        }
+
+        /// <summary>
+        /// Provides handling for the <see cref="UIElement.GotFocus"/> event.
+        /// </summary>
+        /// <param name="e">
+        /// The event data.
+        /// </param>
+        protected override void OnGotFocus(RoutedEventArgs e)
+        {
+            base.OnGotFocus(e);
+            _isFocused = true;
+            UpdateVisualStates();
+        }
+
+        /// <summary>
+        /// Provides handling for the <see cref="UIElement.LostFocus"/> event.
+        /// </summary>
+        /// <param name="e">
+        /// The event data.
+        /// </param>
+        protected override void OnLostFocus(RoutedEventArgs e)
+        {
+            base.OnLostFocus(e);
+            _isFocused = false;
+            UpdateVisualStates();
         }
 
         /// <inheritdoc />
@@ -305,23 +548,42 @@ namespace Windows.UI.Xaml.Controls
             return returnValue;
         }
 
+        /// <summary>
+        /// Called to close the DropDown using the keyboard.
+        /// </summary>
+        private void KeyboardCloseDropDown(bool commitSelection)
+        {
+            KeyboardToggleDropDown(false /* openDropDown */, commitSelection);
+        }
+
+        private void KeyboardToggleDropDown(bool openDropDown, bool commitSelection)
+        {
+            // Close the dropdown and commit the selection if requested.
+            // Make sure to set the selection after the dropdown has closed
+            // so we don't trigger any unnecessary navigation as a result
+            // of changing the selection.
+            ItemInfo infoToSelect = null;
+            if (commitSelection)
+            {
+                infoToSelect = ItemInfoFromIndex(FocusedIndex);
+            }
+
+            IsDropDownOpen = openDropDown;
+
+            if (openDropDown == false && commitSelection && (infoToSelect != null))
+            {
+                SelectionChange.SelectJustThisItem(infoToSelect, true /* assumeInItemsCollection */);
+            }
+        }
+
         private void OnPopupTextInput(object sender, TextCompositionEventArgs e) => OnTextInput(e);
 
-        private void _popup_INTERNAL_PopupMoved(object sender, EventArgs e)
-        {
-            INTERNAL_PopupsManager.EnsurePopupStaysWithinScreenBounds(_popup);
-        }
+        private void OnPopupChildSizeChanged(object sender, SizeChangedEventArgs e) => _popup?.Reposition();
 
-        void DropDownToggle_Checked(object sender, RoutedEventArgs e)
+        private void OnDropDownToggleClick(object sender, RoutedEventArgs e)
         {
-            IsDropDownOpen = true;
+            IsDropDownOpen = _dropDownToggle.IsChecked.GetValueOrDefault();
         }
-
-        void DropDownToggle_Unchecked(object sender, RoutedEventArgs e)
-        {
-            IsDropDownOpen = false;
-        }
-
 
         /// <summary>
         /// Invoked when the DropDownClosed event is raised.
@@ -378,92 +640,130 @@ namespace Windows.UI.Xaml.Controls
             get { return (bool)GetValue(IsDropDownOpenProperty); }
             set { SetValue(IsDropDownOpenProperty, value); }
         }
+
         /// <summary>
-        /// Identifies the IsDropDownOpen dependency property.
+        /// Identifies the <see cref="IsDropDownOpen"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty IsDropDownOpenProperty =
-            DependencyProperty.Register("IsDropDownOpen", typeof(bool), typeof(ComboBox), new PropertyMetadata(false, IsDropDownOpen_Changed)
-            { CallPropertyChangedWhenLoadedIntoVisualTree = WhenToCallPropertyChangedEnum.IfPropertyIsSet });
+            DependencyProperty.Register(
+                nameof(IsDropDownOpen),
+                typeof(bool),
+                typeof(ComboBox),
+                new PropertyMetadata(false, OnIsDropDownOpenChanged, CoerceIsDropDownOpen));
 
-        private static void IsDropDownOpen_Changed(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        private static void OnIsDropDownOpenChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             var comboBox = (ComboBox)d;
-
-            // IMPORTANT: we must NOT require that the element be in the visual tree because the DropDown may be closed even when the ComboBox is not in the visual tree (for example, after it has been removed from the visual tree)
-            if (e.NewValue is bool)
+            bool isDropDownOpen = (bool)e.NewValue;
+            if (isDropDownOpen)
             {
-                bool isDropDownOpen = (bool)e.NewValue;
+                //-----------------------------
+                // Show the Popup
+                //-----------------------------
 
-                if (isDropDownOpen)
+                // Show the popup:
+                if (comboBox._popup != null)
                 {
-                    //-----------------------------
-                    // Show the Popup
-                    //-----------------------------
+                    // add removed
 
-                    // Show the popup:
-                    if (comboBox._popup != null)
+                    comboBox._popup.IsOpen = true;
+
+                    // Make sure the Width of the popup is at least the same as the popup
+                    if (comboBox._popup.Child is FrameworkElement child)
                     {
-                        // add removed
-
-                        comboBox._popup.IsOpen = true;
-
-                        // Make sure the Width of the popup is at least the same as the popup
-                        if (comboBox._popup.Child is FrameworkElement child)
-                        {
-                            child.MinWidth = comboBox._popup.ActualWidth;
-                        }
+                        child.MinWidth = comboBox._popup.ActualWidth;
                     }
-
-                    // Ensure that the toggle button is checked:
-                    if (comboBox._dropDownToggle != null
-                        && comboBox._dropDownToggle.IsChecked == false)
-                    {
-                        comboBox._dropDownToggle.IsChecked = true;
-                    }
-
-                    comboBox.UpdatePresenter();
-
-                    // Raise the Opened event:
-#if MIGRATION
-                    comboBox.OnDropDownOpened(new EventArgs());
-#else
-                    comboBox.OnDropDownOpened(new RoutedEventArgs());
-#endif
-
-                    comboBox.EnsurePopupIsWithinBoundaries();
                 }
-                else
+
+                // Ensure that the toggle button is checked:
+                if (comboBox._dropDownToggle != null
+                    && comboBox._dropDownToggle.IsChecked == false)
                 {
-                    //-----------------------------
-                    // Hide the Popup
-                    //-----------------------------
+                    comboBox._dropDownToggle.IsChecked = true;
+                }
 
-                    // Close the popup:
-                    if (comboBox._popup != null)
-                        comboBox._popup.IsOpen = false;
+                comboBox.UpdatePresenter();
 
-                    // Ensure that the toggle button is unchecked:
-                    if (comboBox._dropDownToggle != null && comboBox._dropDownToggle.IsChecked == true)
-                    {
-                        comboBox._dropDownToggle.IsChecked = false;
-                    }
-
-                    comboBox.UpdatePresenter();
-
-                    // Raise the Closed event:
+                // Raise the Opened event:
 #if MIGRATION
-                    comboBox.OnDropDownClosed(new EventArgs());
+                comboBox.OnDropDownOpened(EventArgs.Empty);
 #else
-                    comboBox.OnDropDownClosed(new RoutedEventArgs());
+                comboBox.OnDropDownOpened(new RoutedEventArgs());
 #endif
+
+                if (FocusManager.HasFocus(comboBox, false))
+                {
+                    comboBox.ScrollTo(comboBox.SelectedIndex);
                 }
             }
+            else
+            {
+                //-----------------------------
+                // Hide the Popup
+                //-----------------------------
+
+                // Close the popup:
+                if (comboBox._popup != null)
+                    comboBox._popup.IsOpen = false;
+
+                // Ensure that the toggle button is unchecked:
+                if (comboBox._dropDownToggle != null && comboBox._dropDownToggle.IsChecked == true)
+                {
+                    comboBox._dropDownToggle.IsChecked = false;
+                }
+
+                comboBox.UpdatePresenter();
+
+                // Raise the Closed event:
+#if MIGRATION
+                comboBox.OnDropDownClosed(EventArgs.Empty);
+#else
+                comboBox.OnDropDownClosed(new RoutedEventArgs());
+#endif
+
+                if (FocusManager.HasFocus(comboBox, true))
+                {
+                    comboBox.ScrollTo(-1);
+                }
+            }
+
+            comboBox.UpdateVisualStates();
         }
 
-        private async void EnsurePopupIsWithinBoundaries()
+        private static object CoerceIsDropDownOpen(DependencyObject d, object value)
         {
-            await Task.Delay(TimeSpan.FromSeconds(0.5));
-            INTERNAL_PopupsManager.EnsurePopupStaysWithinScreenBounds(_popup);
+            if ((bool)value)
+            {
+                ComboBox cb = (ComboBox)d;
+                if (!cb.IsLoaded)
+                {
+                    cb.Loaded += new RoutedEventHandler(OpenOnLoad);
+                    return false;
+                }
+            }
+
+            return value;
+        }
+        
+        private static void OpenOnLoad(object sender, RoutedEventArgs e)
+        {
+            var cb = (ComboBox)sender;
+            cb.Loaded -= new RoutedEventHandler(OpenOnLoad);
+            cb.Dispatcher.BeginInvoke(() => cb.CoerceValue(IsDropDownOpenProperty));
+        }
+
+        private void ScrollTo(int index)
+        {
+            if (index > -1)
+            {
+                UpdateLayout();
+                FocusItemInternal(index);
+                ScrollIntoViewImpl(index);
+            }
+            else
+            {
+                Focus();
+            }
         }
 
         /// <summary>
@@ -483,44 +783,9 @@ namespace Windows.UI.Xaml.Controls
 
         private void OnOutsideClick(object sender, OutsideClickEventArgs e)
         {
-            if (_suppressCloseOnOutsideClick)
-            {
-                e.Handled = true;
-                _suppressCloseOnOutsideClick = false;
-            }
-        }
+            e.Handled = true;
 
-        void Popup_ClosedDueToOutsideClick(object sender, EventArgs e)
-        {
-            //------------------
-            // The user clicked outside the combo box, so the Popup closed itself. We now need to reflect this on the ComboBox appearance (drop-down toggle...).
-            //------------------
-
-            if (this._dropDownToggle != null)
-            {
-#if MIGRATION
-                // See comment below
-                if (this._dropDownToggle.IsMouseCaptured)
-                {
-                    this._dropDownToggle.ReleaseMouseCapture();
-                }
-
-#else
-                // In case the pointer is captured by the toggle button, we need to release it because the Click event would be triggered right after the popup was closed, 
-                // resulting in the popup to reopen right away.
-                // To reproduce the issue that happens if we remove the "if" block of code below: create a ComboBox with items, click the ToggleButton of the ComboBox to
-                // open the drop -down popup, then click it again to close the drop-down. Expected result: the drop-down is closed. Actual result: the popup closes and re-opens.
-                // The issue was due to the fact that, when we clicked on the ToggleButton to close the drop-down, the toggle button became Unchecked due to the
-                // "Popup.ClosedDueToOutsideClick" event (resulting in the popup being successfully closed), but then it reopened because the "PointerReleased" event of the
-                // ToggleButton was raised, which re-checked the unchecked ToggleButton. By releasing the capture, we prevent the "PointerReleased" event of the ToggleButton
-                // to be raised.
-                if (this._dropDownToggle.IsPointerCaptured)
-                {
-                    this._dropDownToggle.ReleasePointerCapture();
-                }
-#endif
-                this._dropDownToggle.IsChecked = false; // Note: this has other effects as well: see the "IsDropDownOpen_Changed" method
-            }
+            IsDropDownOpen = false;
         }
 
         /// <summary>
@@ -588,6 +853,35 @@ namespace Windows.UI.Xaml.Controls
         {
             get { return (bool)this.GetValue(IsSelectionBoxHighlightedProperty); }
             private set { this.SetValue(IsSelectionBoxHighlightedProperty, value); }
+        }
+
+        internal override void UpdateVisualStates()
+        {
+            if (!IsEnabled)
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateDisabled, false);
+            }
+            else if (_isMouseOver)
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateMouseOver, false);
+            }
+            else
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateNormal, false);
+            }
+
+            if (IsDropDownOpen)
+            {
+                VisualStateManager.GoToState(this, FocusedDropDownState, false);
+            }
+            else if (_isFocused)
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateFocused, false);
+            }
+            else
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateUnfocused, false);
+            }
         }
     }
 }

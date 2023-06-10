@@ -289,31 +289,33 @@ namespace System.ServiceModel
             // Attempt to read the WCF endpoint address by first looking into the 
             // "ServiceReferences.ClientConfig" file, and then the "App.Config" file
             string endpointAddress;
-            object serviceReferencesClientConfig = CSHTML5.Interop.ExecuteJavaScript("window.ServiceReferencesClientConfig");
-            if (TryReadEndpoint(serviceReferencesClientConfig,
-                                "ServiceReferences.ClientConfig",
-                                contractConfigurationName,
-                                false /* throw if not found */,
-                                out endpointAddress))
-            {
-                _remoteAddressAsString = endpointAddress;
-            }
-            else
-            {
-                object appConfig = CSHTML5.Interop.ExecuteJavaScript("window.AppConfig");
-                if (TryReadEndpoint(appConfig,
-                                    "App.Config",
-                                    contractConfigurationName,
-                                    true /* throw if not found */,
-                                    out endpointAddress))
+            using (var serviceReferencesClientConfig = OpenSilver.Interop.ExecuteJavaScript("window.ServiceReferencesClientConfig")) {
+                if (TryReadEndpoint(serviceReferencesClientConfig,
+                        "ServiceReferences.ClientConfig",
+                        contractConfigurationName,
+                        false /* throw if not found */,
+                        out endpointAddress))
                 {
                     _remoteAddressAsString = endpointAddress;
                 }
                 else
                 {
-                    throw new Exception(
-                        string.Format("Could not find the default WCF endpoint element that references the contract '{0}' in the ServiceModel client configuration section.",
-                                      contractConfigurationName));
+                    using (var appConfig = OpenSilver.Interop.ExecuteJavaScript("window.AppConfig")) {
+                        if (TryReadEndpoint(appConfig,
+                                "App.Config",
+                                contractConfigurationName,
+                                true /* throw if not found */,
+                                out endpointAddress))
+                        {
+                            _remoteAddressAsString = endpointAddress;
+                        }
+                        else
+                        {
+                            throw new Exception(
+                                string.Format("Could not find the default WCF endpoint element that references the contract '{0}' in the ServiceModel client configuration section.",
+                                    contractConfigurationName));
+                        }
+                    }
                 }
             }
         }
@@ -325,7 +327,8 @@ namespace System.ServiceModel
             bool throwIfFileNotFound,
             out string endpointAddress)
         {
-            bool isNullOrUndefined = Convert.ToBoolean(CSHTML5.Interop.ExecuteJavaScript("$0 == undefined || $0 == null", configFileContent));
+            bool isNullOrUndefined = OpenSilver.Interop.ExecuteJavaScriptBoolean(
+                $"!{CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(configFileContent)}");
             if (!isNullOrUndefined)
             {
                 string fileContentAsString = Convert.ToString(configFileContent);
@@ -1326,7 +1329,11 @@ namespace System.ServiceModel
                 bool isXmlSerializer,
                 string soapVersion)
             {
-                if (e.Error == null)
+                if (e.Error != null && string.IsNullOrEmpty(e.Result))
+                {
+                    taskCompletionSource.TrySetException(e.Error);
+                }
+                else
                 {
                     T requestResponse = (T)ReadAndPrepareResponse(
                         e.Result,
@@ -1346,10 +1353,6 @@ namespace System.ServiceModel
                     {
                         taskCompletionSource.SetResult(requestResponse);
                     }
-                }
-                else
-                {
-                    taskCompletionSource.TrySetException(e.Error);
                 }
             }
 
@@ -1393,44 +1396,45 @@ namespace System.ServiceModel
 
             private FaultException GetFaultException(string response, bool useXmlSerializerFormat)
             {
-                FaultException fe = null;
                 const string ns = "http://schemas.xmlsoap.org/soap/envelope/";
 
                 VerifyThatResponseIsNotNullOrEmpty(response);
-                XElement faultElement = XDocument.Parse(response).Root
+                var faultElement = XDocument.Parse(response).Root
                                                  .Element(XName.Get("Body", ns))
                                                  .Element(XName.Get("Fault", ns));
 
-                if (faultElement != null)
+                if (faultElement == null)
                 {
-                    XElement detailElement = faultElement.Element(XName.Get("detail"));
-                    if (detailElement != null)
-                    {
-                        detailElement = detailElement.Elements().First();
-                        Type detailType = ResolveType(detailElement.Name, useXmlSerializerFormat);
-
-                        DataContractSerializerCustom serializer =
-                            new DataContractSerializerCustom(detailType, false);
-
-                        object detail = serializer.DeserializeFromXElement(detailElement);
-
-                        XElement faultStringElement = faultElement.Element(XName.Get("faultstring"));
-                        FaultReason reason = new FaultReason(
-                            new FaultReasonText(faultStringElement.Value,
-                                                faultStringElement.Attribute(XName.Get("lang", XNamespace.Xml.NamespaceName))
-                                                                  .Value));
-
-                        XElement faultCodeElement = faultElement.Element(XName.Get("faultcode"));
-                        FaultCode code = new FaultCode(faultCodeElement.Value);
-
-                        Type type = typeof(FaultException<>).MakeGenericType(detailType);
-
-
-                        fe = (FaultException)Activator.CreateInstance(type, new object[4] { detail, reason, code, null });
-                    }
+                    return new FaultException();
                 }
 
-                return fe ?? new FaultException();
+                var faultStringElement = faultElement.Element(XName.Get("faultstring"));
+                var faultReasonValue = faultStringElement?.Value;
+                var lang = faultStringElement?.Attribute(XName.Get("lang", XNamespace.Xml.NamespaceName))?.Value;
+                var faultReasonText = string.IsNullOrEmpty(lang)
+                    ? new FaultReasonText(faultReasonValue)
+                    : new FaultReasonText(faultReasonValue, lang);
+                var reason = new FaultReason(faultReasonText);
+
+                var faultCodeElement = faultElement.Element(XName.Get("faultcode"));
+                var code = new FaultCode(faultCodeElement?.Value);
+
+                var detailElement = faultElement.Element(XName.Get("detail"));
+                if (detailElement == null)
+                {
+                    return new FaultException(reason, code, null);
+                }
+
+                detailElement = detailElement.Elements().First();
+                var detailType = ResolveType(detailElement.Name, useXmlSerializerFormat);
+
+                var serializer = new DataContractSerializerCustom(detailType);
+
+                var detail = serializer.DeserializeFromXElement(detailElement);
+
+                var type = typeof(FaultException<>).MakeGenericType(detailType);
+
+                return (FaultException)Activator.CreateInstance(type, detail, reason, code, null);
             }
 
             private static Type ResolveType(XName name, bool useXmlSerializerFormat)
@@ -1729,7 +1733,21 @@ namespace System.ServiceModel
 
                     if (!isXmlSerializer)
                     {
-                        xElement = xElement.Elements().FirstOrDefault() ?? xElement;
+                        if (typeToDeserialize.GetCustomAttribute<MessageContractAttribute>() != null)
+                        {
+                            // DataContractSerializer needs correct namespace instead of http://tempuri.org/
+                            XNamespace ns = DataContractSerializer_Helpers.GetDefaultNamespace(typeToDeserialize.Namespace, false);
+                            xElement.Name = ns + xElement.Name.LocalName;
+                            xElement.Attributes("xmlns").Remove();
+                            foreach (var childElement in xElement.Elements())
+                            {
+                                childElement.Name = ns + childElement.Name.LocalName;
+                            }
+                        }
+                        else
+                        {
+                            xElement = xElement.Elements().FirstOrDefault() ?? xElement;
+                        }
                         requestResponse = deSerializer.DeserializeFromXElement(xElement);
                     }
                     else
@@ -1788,14 +1806,15 @@ namespace System.ServiceModel
                             requestResponse = (char)(int.Parse(responseAsString)); //todo: support encodings
                         else if (requestResponseType == typeof(DateTime) || requestResponseType == typeof(DateTime?))
                             requestResponse = INTERNAL_DateTimeHelpers.ToDateTime(responseAsString); //todo: ensure this is the culture-invariant parsing!
+                        else if (requestResponseType.IsEnum)
+                            requestResponse = Enum.Parse(requestResponseType, responseAsString);
                         else if (requestResponseType == typeof(void))
                         {
                             // Do nothing so null object will be returned
                         }
                         else
-                            throw new NotSupportedException(
-                                string.Format("The following type is not supported in the current WCF implementation: '{0}'. \nPlease report this issue to support@cshtml5.com",
-                                              requestResponseType));
+                            throw new NotSupportedException($"The following type is not supported in the current WCF implementation: '{requestResponseType}', string value is {responseAsString}. " +
+                                $"\nPlease report this issue to support@cshtml5.com");
                     }
                     else
                     {

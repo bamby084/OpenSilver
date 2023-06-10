@@ -921,11 +921,12 @@ namespace Windows.UI.Xaml.Controls
                     int newCaretPosition = ActualTimeGlobalizationInfo.GetTextPositionForTimeUnit(Text.Text, ts, ActualFormat);
                     Text.SelectionStart = newCaretPosition > -1 ? newCaretPosition : caretPosition;
                 }
+                this.Dispatcher.BeginInvoke(() => { Text.Focus(); });
             }
         }
 
         /// <summary>
-        /// Called by OnSpin when the spin direction is SpinDirection.Increase.
+        /// Called by OnSpin when the spin direction is SpinDirection.Decrease.
         /// </summary>
         protected override void OnDecrement()
         {
@@ -967,6 +968,7 @@ namespace Windows.UI.Xaml.Controls
                     int newCaretPosition = ActualTimeGlobalizationInfo.GetTextPositionForTimeUnit(Text.Text, ts, ActualFormat);
                     Text.SelectionStart = newCaretPosition > -1 ? newCaretPosition : caretPosition;
                 }
+                this.Dispatcher.BeginInvoke(() => { Text.Focus(); });
             }
         }
 
@@ -1298,9 +1300,9 @@ namespace Windows.UI.Xaml.Controls
         /// </summary>
         /// <param name="e">The data for the event.</param>
 #if MIGRATION
-        protected internal override void OnMouseLeave(MouseEventArgs e)
+        protected override void OnMouseLeave(MouseEventArgs e)
 #else
-        protected internal override void OnPointerExited(MouseEventArgs e)
+        protected override void OnPointerExited(MouseEventArgs e)
 #endif
         {
             if (Interaction.AllowMouseLeave(e))
@@ -1363,10 +1365,11 @@ namespace Windows.UI.Xaml.Controls
         protected override void SelectAllText()
         {
             // TimeUpDown only selects all text when coming in from a tab.
-            if (!_isIgnoreSelectionOfAllText)
-            {
-                base.SelectAllText();
-            }
+            // but wrong detection of FocusedElement cause this always execute, just comment out to correct spin behaviour with specific caret position on TextBox.
+            //if (!_isIgnoreSelectionOfAllText)
+            //{
+            //    base.SelectAllText();
+            //}
         }
 
         /// <summary>

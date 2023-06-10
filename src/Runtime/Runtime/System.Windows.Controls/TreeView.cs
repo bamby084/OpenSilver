@@ -605,13 +605,20 @@ namespace Windows.UI.Xaml.Controls
 
                     ChangeSelection(current, current, true);
 
-                    // If the item is not in the visual tree, we will make sure
-                    // every check for ContainsSelection will try and update the
-                    // sequence of ContainsSelection flags for the
-                    // SelectedContainer.
-                    if (SelectedContainer.ParentItemsControl == null)
+                    // ChangeSelection invokes the SelectedItemChanged event which
+                    // give the user the opportunity to change the value of the
+                    // SelectedItem property. If the current item is unselected
+                    // during that time, then the SelectedContainer will be null.
+                    if (SelectedContainer != null)
                     {
-                        SelectedContainer.RequiresContainsSelectionUpdate = true;
+                        // If the item is not in the visual tree, we will make sure
+                        // every check for ContainsSelection will try and update the
+                        // sequence of ContainsSelection flags for the
+                        // SelectedContainer.
+                        if (SelectedContainer.ParentItemsControl == null)
+                        {
+                            SelectedContainer.RequiresContainsSelectionUpdate = true;
+                        }
                     }
                 }
                 foreach (TreeViewItem nestedItem in current.Items.OfType<TreeViewItem>())
@@ -1056,9 +1063,9 @@ namespace Windows.UI.Xaml.Controls
         /// </summary>
         /// <param name="e">Event arguments.</param>
 #if MIGRATION
-        protected internal override void OnMouseLeave(MouseEventArgs e)
+        protected override void OnMouseLeave(MouseEventArgs e)
 #else
-        protected internal override void OnPointerExited(PointerRoutedEventArgs e)
+        protected override void OnPointerExited(PointerRoutedEventArgs e)
 #endif
         {
             if (Interaction.AllowMouseLeave(e))

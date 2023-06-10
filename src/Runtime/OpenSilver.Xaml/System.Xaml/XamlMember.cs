@@ -32,7 +32,7 @@ using System.Xaml.Schema;
 
 namespace System.Xaml
 {
-	public class XamlMember : IEquatable<XamlMember>
+    internal class XamlMember : IEquatable<XamlMember>
 	{
 		FlagValue flags;
 		static class MemberFlags
@@ -515,8 +515,6 @@ namespace System.Xaml
 		{
 			var t = Type.UnderlyingType;
 			if (t == null)
-				return null;
-			if (t == typeof(object)) // it is different from XamlType.LookupTypeConverter().
 				return null;
 
 			var converterName = CustomAttributeProvider.GetTypeConverterName(false);

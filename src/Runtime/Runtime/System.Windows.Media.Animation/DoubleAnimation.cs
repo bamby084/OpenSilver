@@ -105,13 +105,33 @@ namespace Windows.UI.Xaml.Media.Animation
 
         internal override void Apply(IterationParameters parameters, bool isLastLoop)
         {
-            if (To != null)
+            double? from = From;
+            double? to = To;
+            if (!from.HasValue && !to.HasValue)
+            {
+                return;
+            }
+
+            Duration duration = ResolveDuration();
+            if (IsZeroDuration(duration))
+            {
+                AnimationHelpers.ApplyValue(_propertyContainer, _targetProperty, to ?? from.Value);
+                OnIterationCompleted(parameters);
+                return;
+            }
+
+            if (from.HasValue)
+            {
+                AnimationHelpers.ApplyValue(_propertyContainer, _targetProperty, from.Value);
+            }
+
+            if (to.HasValue)
             {
                 // - Get the propertyMetadata from the property
                 PropertyMetadata propertyMetadata = _propDp.GetTypeMetaData(_propertyContainer.GetType());
 
                 //we make a specific name for this animation:
-                string specificGroupName = animationInstanceSpecificName.ToString();
+                string specificGroupName = animationInstanceSpecificName;
 
                 _animationID = Guid.NewGuid();
 
@@ -122,9 +142,15 @@ namespace Windows.UI.Xaml.Media.Animation
                     if (cssEquivalent != null)
                     {
                         cssEquivalentExists = true;
-                        StartAnimation(_propertyContainer, cssEquivalent, From, To, Duration, (EasingFunctionBase)EasingFunction, specificGroupName, _propDp,
-                        OnAnimationCompleted(parameters, isLastLoop, To.Value, _propertyContainer, _targetProperty, _animationID));
-
+                        StartAnimation(_propertyContainer,
+                            cssEquivalent,
+                            from,
+                            to.Value,
+                            duration,
+                            (EasingFunctionBase)EasingFunction,
+                            specificGroupName,
+                            _propDp,
+                            GetAnimationCompletedCallback(parameters, isLastLoop, to.Value, _propertyContainer, _targetProperty, _animationID));
                     }
                 }
                 //todo: use GetCSSEquivalent instead (?)
@@ -134,34 +160,53 @@ namespace Windows.UI.Xaml.Media.Animation
                     foreach (CSSEquivalent equivalent in cssEquivalents)
                     {
                         cssEquivalentExists = true;
-                        StartAnimation(_propertyContainer, equivalent, From, To, Duration, (EasingFunctionBase)EasingFunction, specificGroupName, _propDp,
-                        OnAnimationCompleted(parameters, isLastLoop, To.Value, _propertyContainer, _targetProperty, _animationID));
+                        StartAnimation(_propertyContainer,
+                            equivalent,
+                            from,
+                            to.Value,
+                            duration,
+                            (EasingFunctionBase)EasingFunction,
+                            specificGroupName,
+                            _propDp,
+                            GetAnimationCompletedCallback(parameters, isLastLoop, to.Value, _propertyContainer, _targetProperty, _animationID));
                     }
                 }
 
                 if (!cssEquivalentExists)
                 {
-                    OnAnimationCompleted(parameters, isLastLoop, To.Value, _propertyContainer, _targetProperty, _animationID)();
+                    OnAnimationCompleted(parameters, isLastLoop, to.Value, _propertyContainer, _targetProperty, _animationID);
                 }
             }
         }
-
-        private Action OnAnimationCompleted(IterationParameters parameters, bool isLastLoop, object value, DependencyObject target, PropertyPath propertyPath, Guid callBackGuid)
+        
+        private void OnAnimationCompleted(IterationParameters parameters,
+            bool isLastLoop,
+            object value,
+            DependencyObject target,
+            PropertyPath propertyPath,
+            Guid callBackGuid)
         {
-            return () =>
+            if (!_isUnapplied)
             {
-                if (!this._isUnapplied)
+                if (isLastLoop && _animationID == callBackGuid)
                 {
-                    if (isLastLoop && _animationID == callBackGuid)
-                    {
-                        AnimationHelpers.ApplyValue(target, propertyPath, value);
-                    }
-                    OnIterationCompleted(parameters);
+                    AnimationHelpers.ApplyValue(target, propertyPath, value);
                 }
-            };
+                OnIterationCompleted(parameters);
+            }
         }
 
-        static void StartAnimation(DependencyObject target, CSSEquivalent cssEquivalent, double? from, object to, Duration Duration, EasingFunctionBase easingFunction, string visualStateGroupName, DependencyProperty dependencyProperty, Action callbackForWhenfinished = null)
+        private Action GetAnimationCompletedCallback(IterationParameters parameters,
+            bool isLastLoop,
+            object value,
+            DependencyObject target,
+            PropertyPath propertyPath,
+            Guid callBackGuid)
+        {
+            return () => OnAnimationCompleted(parameters, isLastLoop, value, target, propertyPath, callBackGuid);
+        }
+
+        private void StartAnimation(DependencyObject target, CSSEquivalent cssEquivalent, double? from, object to, Duration Duration, EasingFunctionBase easingFunction, string visualStateGroupName, DependencyProperty dependencyProperty, Action callbackForWhenfinished = null)
         {
             if (cssEquivalent.Name != null && cssEquivalent.Name.Count != 0)
             {
@@ -183,24 +228,31 @@ namespace Windows.UI.Xaml.Media.Animation
                         }
                         object cssValue = cssEquivalent.Value(target, to);
 
-                        object newObj = CSHTML5.Interop.ExecuteJavaScriptAsync(@"new Object()");
-
-                        if (AnimationHelpers.IsValueNull(from)) //todo: when using Bridge, I guess we would want to directly use "from == null" since it worked in the first place (I think).
+                        string sCssValue = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(cssValue);
+                        string fromToValues;
+                        if (!from.HasValue)
                         {
-                            foreach (string csspropertyName in cssEquivalent.Name)
-                            {
-                                CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0[$1] = $2;", newObj, csspropertyName, cssValue);
-                            }
+                            fromToValues = "{" + string.Join(",", cssEquivalent.Name.Select(name => $"\"{name}\":{sCssValue}")) + "}";
                         }
                         else
                         {
-                            foreach (string csspropertyName in cssEquivalent.Name)
-                            {
-                                CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0[$1] = [$2, $3];", newObj, csspropertyName, cssValue, from);
-                            }
+                            string sFrom = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(from);
+                            fromToValues = "{" + string.Join(",", cssEquivalent.Name.Select(name => $"\"{name}\":[{sCssValue},{sFrom}]")) + "}";
                         }
-                        AnimationHelpers.CallVelocity(cssEquivalent.DomElement, Duration, easingFunction, visualStateGroupName, callbackForWhenfinished, newObj);
+
+                        AnimationHelpers.CallVelocity(
+                            this,
+                            cssEquivalent.DomElement,
+                            Duration,
+                            easingFunction,
+                            visualStateGroupName,
+                            callbackForWhenfinished,
+                            fromToValues);
                         target.DirtyVisualValue(dependencyProperty);
+                    }
+                    else
+                    {
+                        callbackForWhenfinished?.Invoke();
                     }
                 }
             }
@@ -221,7 +273,7 @@ namespace Windows.UI.Xaml.Media.Animation
                     PropertyMetadata propertyMetadata = _propDp.GetTypeMetaData(_propertyContainer.GetType());
 
                     //we make a specific name for this animation:
-                    string specificGroupName = animationInstanceSpecificName.ToString();
+                    string specificGroupName = animationInstanceSpecificName;
 
                     // - Get the cssPropertyName from the PropertyMetadata
                     if (propertyMetadata.GetCSSEquivalent != null)
@@ -241,7 +293,8 @@ namespace Windows.UI.Xaml.Media.Animation
                                 }
                                 if (cssEquivalent.DomElement != null)
                                 {
-                                    CSHTML5.Interop.ExecuteJavaScriptAsync(@"Velocity($0, ""stop"", $1);", cssEquivalent.DomElement, specificGroupName);
+                                    string sDomElement = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(cssEquivalent.DomElement);
+                                    AnimationHelpers.StopVelocity(sDomElement, specificGroupName);
                                 }
                             }
                         }
@@ -253,7 +306,8 @@ namespace Windows.UI.Xaml.Media.Animation
                         {
                             if (equivalent.DomElement != null)
                             {
-                                CSHTML5.Interop.ExecuteJavaScriptAsync(@"Velocity($0, ""stop"", $1);", equivalent.DomElement, specificGroupName);
+                                string sDomElement = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(equivalent.DomElement);
+                                AnimationHelpers.StopVelocity(sDomElement, specificGroupName);
                             }
                         }
                     }

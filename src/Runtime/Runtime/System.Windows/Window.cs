@@ -18,6 +18,7 @@ using System.Diagnostics;
 using System.ComponentModel;
 using System.Globalization;
 using CSHTML5.Internal;
+using CSHTML5;
 
 #if MIGRATION
 using System.Windows.Controls;
@@ -48,8 +49,9 @@ namespace Windows.UI.Xaml
         /// </summary>
         public Window() : this(false) { }
 
-        internal Window(bool hookUpEvents)
+        internal Window(bool hookUpEvents, bool isMainWindow = false)
         {
+            IsMainWindow = isMainWindow;
             if (hookUpEvents)
             {
                 new DOMEventManager(
@@ -65,6 +67,8 @@ namespace Windows.UI.Xaml
                 .AttachToDomEvents();
             }
         }
+
+        internal bool IsMainWindow { get; set; } //This has been added to differentiate between the MainWindow (created with the application) and the subsequent ones, as there are some things that only need to be done once (so only by the main window), or that should only be done on the main window.
 
         internal override int VisualChildrenCount
         {
@@ -112,7 +116,6 @@ namespace Windows.UI.Xaml
         public string Title { get; set; }
         #endregion
 
-        internal PositionsWatcher INTERNAL_PositionsWatcher = new PositionsWatcher(); //Note: this is to handle the changes of position of elements (for example for when we want a popup to stick to a given UIElement - see Popup.PlacementTarget).
         internal object INTERNAL_RootDomElement;
 
         /// <summary>
@@ -121,56 +124,53 @@ namespace Windows.UI.Xaml
         /// <param name="rootDomElement">The DOM element that will host the window</param>
         public void AttachToDomElement(object rootDomElement)
         {
-            if (this.INTERNAL_OuterDomElement != null
-                || this.INTERNAL_RootDomElement != null)
-                throw new InvalidOperationException("The method 'Window.AttachToDomElement' can be called only once.");
-
-            if (rootDomElement == null)
-                throw new ArgumentNullException("rootDomElement");
-
-            //Note: The "rootDomElement" will contain one DIV for the root of the window visual tree, and other DIVs to host the popups.
-            this.INTERNAL_RootDomElement = rootDomElement;
-
-            // Reset the content of the root DIV:
-            CSHTML5.Interop.ExecuteJavaScript("document.clearXamlRoot()");
-
-            // In case of XAML view hosted inside an HTML app, we usually set the "position" of the window root to "relative" rather than "absolute" (via external JavaScript code) in order to display it inside a specific DIV. However, in this case, the layers that contain the Popups are placed under the window DIV instead of over it. To work around this issue, we set the root element display to "grid". See the sample app "IntegratingACshtml5AppInAnSPA".
-            if (Grid_InternalHelpers.isCSSGridSupported()) //todo: what about the old browsers where "CSS Grid" is not supported?
+            if (INTERNAL_OuterDomElement != null || INTERNAL_RootDomElement != null)
             {
-                CSHTML5.Interop.ExecuteJavaScriptAsync("$0.style.display = 'grid'", rootDomElement);
+                throw new InvalidOperationException("The method 'Window.AttachToDomElement' can be called only once.");
             }
 
+            //Note: The "rootDomElement" will contain one DIV for the root of the window visual tree, and other DIVs to host the popups.
+            INTERNAL_RootDomElement = rootDomElement ?? throw new ArgumentNullException(nameof(rootDomElement));
+
+            // In case of XAML view hosted inside an HTML app, we usually set the "position" of the window root to "relative" rather than "absolute" (via external JavaScript code) in order to display it inside a specific DIV. However, in this case, the layers that contain the Popups are placed under the window DIV instead of over it. To work around this issue, we set the root element display to "grid". See the sample app "IntegratingACshtml5AppInAnSPA".
+            string sRootElement = INTERNAL_InteropImplementation.GetVariableStringForJS(rootDomElement);
+            OpenSilver.Interop.ExecuteJavaScriptFastAsync($"{sRootElement}.style.display = 'grid'");
+
             // Create the DIV that will correspond to the root of the window visual tree:
-            object windowRootDiv;
+            var windowRootDivStyle = INTERNAL_HtmlDomManager.CreateDomElementAppendItAndGetStyle("div", rootDomElement, this, out object windowRootDiv);
 
-            var windowRootDivStyle = INTERNAL_HtmlDomManager.CreateDomElementAppendItAndGetStyle("div", rootDomElement, this, out windowRootDiv);
-
-            windowRootDivStyle.position = "absolute";
+            if (IsMainWindow) // note: position = "absolute" caused issues in the Xaml into Blazor POC where the elements did not occupy the space they took, making other elements of the page behave as if they weren't there.
+                              //        In SL, the new windows are obviously in new windows so the concept of taking space doesn't apply. The closest behaviour would use "absolute" so we might need a way to decide which one we want. 
+            {
+                windowRootDivStyle.position = "absolute"; 
+            }
             windowRootDivStyle.width = "100%";
             windowRootDivStyle.height = "100%";
             windowRootDivStyle.overflowX = "hidden";
             windowRootDivStyle.overflowY = "hidden";
 
-            this.INTERNAL_OuterDomElement = windowRootDiv;
-            this.INTERNAL_InnerDomElement = windowRootDiv;
+            INTERNAL_OuterDomElement = windowRootDiv;
+            INTERNAL_InnerDomElement = windowRootDiv;
+
+            INTERNAL_AttachToDomEvents();
 
             // Set the window as "loaded":
-            this._isLoaded = true;
-            this.IsConnectedToLiveTree = true;
-            this.UpdateIsVisible();
+            _isLoaded = true;
+            IsConnectedToLiveTree = true;
+            UpdateIsVisible();
 
             // Attach the window content, if any:
-            object content = this.Content;
+            object content = Content;
             if (content != null)
             {
                 OnContentChanged(null, content);
             }
 
             // Raise the "Loaded" event:
-            this.RaiseLoadedEvent();
-            this.InvalidateMeasure();
+            RaiseLoadedEvent();
+            InvalidateMeasure();
             
-            this.SizeChanged += WindowSizeChangedEventHandler;
+            SizeChanged += WindowSizeChangedEventHandler;
         }
 
         private void WindowSizeChangedEventHandler(object sender, WindowSizeChangedEventArgs e)
@@ -190,25 +190,14 @@ namespace Windows.UI.Xaml
         {
             double width;
             double height;
-#if OPENSILVER
-            if (true)
-#elif BRIDGE
-            if (CSHTML5.Interop.IsRunningInTheSimulator)
-#endif
-            {
-                // Hack to improve the Simulator performance by making only one interop call rather than two:
-                string concatenated = Convert.ToString(OpenSilver.Interop.ExecuteJavaScript("$0.offsetWidth + '|' + $0.offsetHeight", this.INTERNAL_OuterDomElement));
-                int sepIndex = concatenated.IndexOf('|');
-                string widthAsString = concatenated.Substring(0, sepIndex);
-                string heightAsString = concatenated.Substring(sepIndex + 1);
-                width = double.Parse(widthAsString, CultureInfo.InvariantCulture); //todo: verify that the locale is OK. I think that JS by default always produces numbers in invariant culture (with "." separator).
-                height = double.Parse(heightAsString, CultureInfo.InvariantCulture); //todo: read note above
-            }
-            else
-            {
-                width = Convert.ToDouble(OpenSilver.Interop.ExecuteJavaScript("$0.offsetWidth", this.INTERNAL_OuterDomElement)); //(double)INTERNAL_HtmlDomManager.GetRawHtmlBody().clientWidth;
-                height = Convert.ToDouble(OpenSilver.Interop.ExecuteJavaScript("$0.offsetHeight", this.INTERNAL_OuterDomElement)); //(double)INTERNAL_HtmlDomManager.GetRawHtmlBody().clientHeight;
-            }
+            string sElement = INTERNAL_InteropImplementation.GetVariableStringForJS(this.INTERNAL_OuterDomElement);
+            // Hack to improve the Simulator performance by making only one interop call rather than two:
+            string concatenated = OpenSilver.Interop.ExecuteJavaScriptString($"{sElement}.offsetWidth + '|' + {sElement}.offsetHeight");
+            int sepIndex = concatenated.IndexOf('|');
+            string widthAsString = concatenated.Substring(0, sepIndex);
+            string heightAsString = concatenated.Substring(sepIndex + 1);
+            width = double.Parse(widthAsString, CultureInfo.InvariantCulture); //todo: verify that the locale is OK. I think that JS by default always produces numbers in invariant culture (with "." separator).
+            height = double.Parse(heightAsString, CultureInfo.InvariantCulture); //todo: read note above
 
             var eventArgs = new WindowSizeChangedEventArgs()
             {
@@ -285,7 +274,10 @@ namespace Windows.UI.Xaml
                     }
                 }
 
-                Application.Current.TextMeasurementService.CreateMeasurementText(this);
+                if (IsMainWindow) // Note we only need to create this once with the MainWindow (also, trying to do it again from another window will cause Exceptions since the next call tries to detach the measurement TextBlock from "this" passed as argument, but "this" is not the same window as the one it had been attached to)
+                {
+                    Application.Current.TextMeasurementService.CreateMeasurementText(this);
+                }
 
                 /*
                 // Invalidate when content changed
@@ -392,6 +384,14 @@ namespace Windows.UI.Xaml
         [OpenSilver.NotImplemented]
         public static Window GetWindow(DependencyObject dependencyObject)
         {
+            //TODO: this should in theory throw an InvaliOperationException if the dependencyObject is not valid but I didn't check what made it not valid (it looks like Windows themselves are not valid).
+            //      In Silverlight, doing: Window.GetWindow(new Border()); returns the main window if it was made from the main window, null if from another window.
+
+            UIElement dependencyObjectAsUIElement = dependencyObject as UIElement;
+            if (dependencyObjectAsUIElement != null)
+            {
+                return dependencyObjectAsUIElement.INTERNAL_ParentWindow;
+            }
             return null;
         }
 
@@ -423,19 +423,6 @@ namespace Windows.UI.Xaml
         public void DragResize(WindowResizeEdge resizeEdge)
         {
 
-        }
-
-        private void CalculateWindowLayout()
-        {
-            if (Current.INTERNAL_VisualChildrenInformation == null)
-                return;
-
-            Rect windowBounds = this.Bounds;
-            double width = windowBounds.Width;
-            double height = windowBounds.Height;
-            Debug.WriteLine($"CalculateWindowLayout {width}, {height}");
-            Current.Measure(new Size(width, height));
-            Current.Arrange(windowBounds);
         }
 
         protected override Size MeasureOverride(Size availableSize)

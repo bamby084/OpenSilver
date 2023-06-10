@@ -13,8 +13,6 @@
 
 using System;
 using System.Windows.Markup;
-using System.Collections.Generic;
-using System.Globalization;
 using CSHTML5.Internal;
 
 #if MIGRATION
@@ -28,7 +26,7 @@ namespace Windows.UI.Xaml.Media
     /// objects.
     /// </summary>
     [ContentProperty(nameof(Children))]
-    public sealed partial class TransformGroup : Transform
+    public sealed class TransformGroup : Transform
     {
         /// <summary>
         /// Initializes a new instance of the <see cref="TransformGroup"/> class.
@@ -110,17 +108,37 @@ namespace Windows.UI.Xaml.Media
             }
         }
 
+        internal override bool IsIdentity
+        {
+            get
+            {
+                TransformCollection children = (TransformCollection)GetValue(ChildrenProperty);
+                if (children == null || children.Count == 0)
+                {
+                    return true;
+                }
+
+                for (int i = 0; i < children.Count; i++)
+                {
+                    if (!children[i].IsIdentity)
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+        }
+
         private void ApplyCSSChanges(Matrix m)
         {
-            var target = this.INTERNAL_parent;
-            if (target != null)
+            UIElement target = INTERNAL_parent;
+            if (target is not null)
             {
-                INTERNAL_HtmlDomManager.SetDomElementStyleProperty(
-                target.INTERNAL_OuterDomElement,
-                new List<string>(1) { "transform" },
-                string.Format(CultureInfo.InvariantCulture,
-                              "matrix({0}, {1}, {2}, {3}, {4}, {5})",
-                              m.M11, m.M12, m.M21, m.M22, m.OffsetX, m.OffsetY));
+                INTERNAL_HtmlDomManager.SetCSSStyleProperty(
+                    target.INTERNAL_OuterDomElement,
+                    "transform",
+                    MatrixTransform.MatrixToHtmlString(m));
             }
         }
 

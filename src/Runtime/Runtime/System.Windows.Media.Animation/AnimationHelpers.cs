@@ -15,15 +15,17 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using CSHTML5.Internal;
+using OpenSilver.Internal;
 #if BRIDGE
 using Bridge;
 #endif
 #if !MIGRATION
 using Windows.UI.Xaml;
-using Windows.UI.Xaml.Media.Animation;
 #endif
 
 #if MIGRATION
@@ -34,7 +36,14 @@ namespace Windows.UI.Xaml.Media.Animation
 {
     internal static class AnimationHelpers
     {
-        internal static void CallVelocity(object domElement, Duration Duration, EasingFunctionBase easingFunction, string visualStateGroupName, Action callbackForWhenfinished, object jsFromToValues)
+        internal static void CallVelocity(
+            AnimationTimeline animation,
+            object domElement,
+            Duration Duration,
+            EasingFunctionBase easingFunction,
+            string visualStateGroupName,
+            Action callbackForWhenfinished,
+            string jsFromToValues)
         {
             string easingFunctionAsString = "linear";
             if (easingFunction != null)
@@ -48,25 +57,25 @@ namespace Windows.UI.Xaml.Media.Animation
                 ++duration;
             }
 
-            object options = CSHTML5.Interop.ExecuteJavaScriptAsync(@"new Object()");
-            if (callbackForWhenfinished == null)
+            string sElement = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(domElement);
+            string elementId = (domElement as INTERNAL_HtmlDomElementReference).UniqueIdentifier;
+
+            StringBuilder sb = StringBuilderFactory.Get();
+            sb.AppendLine("(function(el) {")
+              .AppendLine($@"const options = {{
+easing:""{INTERNAL_HtmlDomManager.EscapeStringForUseInJavaScript(easingFunctionAsString)}"",
+duration:{duration.ToInvariantString()},
+queue:false,
+queue:""{visualStateGroupName}""
+}};");
+
+            if (callbackForWhenfinished != null)
             {
-                CSHTML5.Interop.ExecuteJavaScriptAsync(@"
-$0.easing = $1;
-$0.duration = $2;
-$0.queue = false;
-$0.queue = $3;
-", options, easingFunctionAsString, duration, visualStateGroupName);
-            }
-            else
-            {
-                CSHTML5.Interop.ExecuteJavaScriptAsync(@"
-$0.easing = $1;
-$0.duration = $2;
-$0.queue = false;
-$0.queue = $3;
-$0.complete = $4;
-", options, easingFunctionAsString, duration, visualStateGroupName, callbackForWhenfinished);
+                var jsCallback = JavaScriptCallbackHelper.CreateSelfDisposedJavaScriptCallback(
+                    callbackForWhenfinished,
+                    !OpenSilver.Interop.IsRunningInTheSimulator);
+                sb.Append($"options.complete = {CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(jsCallback)};");
+                animation.RegisterCallback(jsCallback);
             }
 
             if (easingFunction != null)
@@ -76,50 +85,29 @@ $0.complete = $4;
                 {
                     foreach (string key in additionalOptions.Keys)
                     {
-                        CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0[$1] = $2;", options, key, additionalOptions[key]);
+                        string sAdditionalOptions = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(additionalOptions[key]);
+                        sb.Append($@"options.{INTERNAL_HtmlDomManager.EscapeStringForUseInJavaScript(key)} = {sAdditionalOptions};");
                     }
                 }
             }
 
-            CSHTML5.Interop.ExecuteJavaScriptAsync(@"Velocity($0, $1, $2);
-                                                     Velocity.Utilities.dequeue($0, $3);",
-                                                     domElement, jsFromToValues, options, visualStateGroupName);
+            sb.AppendLine($"document.velocityHelpers.animate(el, {jsFromToValues}, options, '{visualStateGroupName}');")
+              .Append($"}})({sElement});");
+
+            string javascript = sb.ToString();
+            StringBuilderFactory.Return(sb);
+
+            OpenSilver.Interop.ExecuteJavaScriptFastAsync(javascript);
+        }
+
+        internal static void StopVelocity(string domElement, string visualStateGroupName)
+        {
+            OpenSilver.Interop.ExecuteJavaScriptFastAsync($@"Velocity({domElement}, ""stop"", ""{visualStateGroupName}"");");
         }
 
         internal static void ApplyValue(DependencyObject target, PropertyPath propertyPath, object value)
         {
-            propertyPath.INTERNAL_PropertySetAnimationValue(target, value);
-        }
-
-        //Note: this method is needed because JSIL doesn't know that a nullable whose value is null is equal to null. (Color? v = null; if(v == null) ...)
-        internal static bool IsValueNull(object from)
-        {
-            return from == null || CheckIfObjectIsNullNullable(from);
-        }
-
-        //Note: CheckIfObjectIsNullNullable and CheckIfNullableIsNotNull below come from DataContractSerializer_Helpers.cs
-        internal static bool CheckIfObjectIsNullNullable(object obj)
-        {
-            Type type = obj.GetType();
-            if (type.FullName.StartsWith("System.Nullable`1"))
-            {
-                //I guess we'll have to use reflection here
-                return !CheckIfNullableIsNotNull(obj);
-            }
-            else
-            {
-                return false;
-            }
-        }
-
-#if !BRIDGE
-        [JSIL.Meta.JSReplacement("$obj.hasValue")]
-#else
-        [Template("{obj}.hasValue")]
-#endif
-        internal static bool CheckIfNullableIsNotNull(object obj)
-        {
-            return (obj != null);
+            target.SetAnimationValue(propertyPath.GetFinalProperty(target), value);
         }
     }
 }

@@ -48,7 +48,6 @@ namespace Windows.UI.Xaml.Controls
         /// </summary>
         public ListBoxItem()
         {
-            DisableBaseControlHandlingOfVisualStates = true;
             IsEnabledChanged += (o, e) => UpdateVisualStates();
             DefaultStyleKey = typeof(ListBoxItem);
         }
@@ -101,6 +100,7 @@ namespace Windows.UI.Xaml.Controls
             if (!e.Handled)
             {
                 e.Handled = true;
+                Focus();
                 ListBox parent = ParentListBox;
                 if (parent != null)
                 {
@@ -136,9 +136,9 @@ namespace Windows.UI.Xaml.Controls
         }
 
 #if MIGRATION
-        protected internal override void OnMouseLeave(MouseEventArgs e)
+        protected override void OnMouseLeave(MouseEventArgs e)
 #else
-        protected internal override void OnPointerExited(PointerRoutedEventArgs e)
+        protected override void OnPointerExited(PointerRoutedEventArgs e)
 #endif
         {
 #if MIGRATION
@@ -156,6 +156,8 @@ namespace Windows.UI.Xaml.Controls
 
             this.IsFocused = true;
             this.UpdateVisualStates();
+            
+            ParentSelector?.NotifyListItemGotFocus(this);
         }
 
         protected override void OnLostFocus(RoutedEventArgs e)
@@ -164,6 +166,8 @@ namespace Windows.UI.Xaml.Controls
 
             this.IsFocused = false;
             this.UpdateVisualStates();
+
+            ParentSelector?.NotifyListItemLostFocus(this);
         }
 
         internal ListBox ParentListBox

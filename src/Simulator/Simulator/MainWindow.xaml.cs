@@ -32,7 +32,6 @@ using DotNetForHtml5.EmulatorWithoutJavascript.XamlInspection;
 using Microsoft.Win32;
 using DotNetForHtml5.EmulatorWithoutJavascript.LicensingServiceReference;
 using DotNetForHtml5.EmulatorWithoutJavascript.LicenseChecking;
-using DotNetForHtml5.Compiler;
 using System.Threading;
 using System.Windows.Threading;
 using DotNetBrowser;
@@ -45,6 +44,7 @@ using DotNetForHtml5.EmulatorWithoutJavascript.Debugging;
 using DotNetBrowser.Events;
 using DotNetForHtml5.EmulatorWithoutJavascript.Console;
 using System.Windows.Media.Imaging;
+using OpenSilver;
 #if OPENSILVER
 using OpenSilver.Simulator;
 #else
@@ -102,6 +102,7 @@ namespace DotNetForHtml5.EmulatorWithoutJavascript
             Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
 
             Application.Current.DispatcherUnhandledException += App_DispatcherUnhandledException;
+            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
 
             InitializeComponent();
             Instance = this;
@@ -259,7 +260,12 @@ ends with "".Browser"" in your solution.";
 
         }
 
-        void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+        private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            SimulatorProxy.ShowExceptionStatic((Exception)e.ExceptionObject);
+        }
+
+        private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
         {
             SimulatorProxy.ShowExceptionStatic(e.Exception);
             e.Handled = true;
@@ -319,7 +325,7 @@ ends with "".Browser"" in your solution.";
             switch (assemblyLocalName)
             {
                 //case Constants.NAME_OF_CORE_ASSEMBLY_USING_BLAZOR:
-                case Constants.NAME_OF_CORE_ASSEMBLY_SLMIGRATION_USING_BLAZOR:
+                case Constants.NAME_OF_CORE_ASSEMBLY_USING_BLAZOR:
                 case "OpenSilver.Controls.Data":
                 case "OpenSilver.Controls.Data.Input":
                 case "OpenSilver.Controls.Data.DataForm.Toolkit":
@@ -747,7 +753,7 @@ ends with "".Browser"" in your solution.";
                     Guid keyGuid;
                     DateTime currentVersionReleaseDate = VersionInformation.GetCurrentVersionReleaseDate();
 
-                    if (DotNetForHtml5.ActivationHelpers.IsFeatureEnabled(featureId))
+                    if (ActivationHelpers.IsFeatureEnabled(featureId))
                     {
 
                         if (Guid.TryParse(RegistryHelpers.GetSetting("Feature_" + featureId, null), out keyGuid))

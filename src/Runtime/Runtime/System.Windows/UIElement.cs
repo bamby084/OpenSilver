@@ -11,29 +11,21 @@
 *  
 \*====================================================================================*/
 
+using System;
 using CSHTML5.Internal;
 using OpenSilver.Internal;
-using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Windows.Media.Effects;
 using System.Diagnostics;
-using System.ComponentModel;
 
 #if MIGRATION
-using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Controls.Primitives;
-using System.Windows.Data;
 #else
-using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Media;
 using Windows.Foundation;
-using Windows.UI.Xaml.Controls.Primitives;
-using Windows.UI.Xaml.Data;
 #endif
 
 #if MIGRATION
@@ -90,20 +82,16 @@ namespace Windows.UI.Xaml
 
         internal bool IsConnectedToLiveTree { get; set; }
 
-#region Visual Parent
+        internal bool IsUnloading { get; set; }
 
-        private DependencyObject _parent;
+        internal bool LoadingIsPending { get; set; }
+
+#region Visual Parent
 
         /// <summary>
         /// Returns the parent of this UIElement.
         /// </summary>
-        internal DependencyObject INTERNAL_VisualParent
-        {
-            get
-            {
-                return _parent;
-            }
-        }
+        internal DependencyObject INTERNAL_VisualParent { get; private set; }
 
 #endregion Visual Parent
 
@@ -154,14 +142,14 @@ namespace Windows.UI.Xaml
         /// child appeard in the children collection. The UIElement layer will then call the GetVisualChild
         /// method to find out where the child was added.
         /// </summary>
-        internal void AddVisualChild(UIElement child)
+        internal void AddVisualChild(IInternalUIElement child)
         {
             if (child == null)
             {
                 return;
             }
 
-            if (child._parent != null)
+            if (child.VisualParent != null)
             {
                 throw new ArgumentException("Must disconnect specified child from current parent UIElement before attaching to new parent UIElement.");
             }
@@ -170,7 +158,7 @@ namespace Windows.UI.Xaml
 
             // Set the parent pointer.
 
-            child._parent = this;
+            child.VisualParent = this;
 
             child.OnVisualParentChanged(null);
         }
@@ -182,14 +170,14 @@ namespace Windows.UI.Xaml
         /// child was removed from the children collection. The UIElement layer will then call
         /// GetChildren to find out which child has been removed.
         /// </summary>
-        internal void RemoveVisualChild(UIElement child)
+        internal void RemoveVisualChild(IInternalUIElement child)
         {
-            if (child == null || child._parent == null)
+            if (child == null || child.VisualParent == null)
             {
                 return;
             }
 
-            if (child._parent != this)
+            if (child.VisualParent != this)
             {
                 throw new ArgumentException("Specified UIElement is not a child of this UIElement.");
             }
@@ -201,7 +189,7 @@ namespace Windows.UI.Xaml
 
             // Set the parent pointer to null.
 
-            child._parent = null;
+            child.VisualParent = null;
 
             child.OnVisualParentChanged(this);
         }
@@ -213,9 +201,9 @@ namespace Windows.UI.Xaml
         internal virtual void OnVisualParentChanged(DependencyObject oldParent)
         {
             // Synchronize ForceInherit properties
-            if (_parent != null)
+            if (INTERNAL_VisualParent != null)
             {
-                SynchronizeForceInheritProperties(this, _parent);
+                SynchronizeForceInheritProperties(this, INTERNAL_VisualParent);
             }
             else
             {
@@ -245,121 +233,31 @@ namespace Windows.UI.Xaml
         internal object INTERNAL_InnerDomElement { get; set; } // This is used to add visual children to the DOM (optionally wrapped into additional code, c.f. "INTERNAL_VisualChildInformation")
         internal object INTERNAL_AdditionalOutsideDivForMargins { get; set; } // This is used to define the margins and to remove the div used for the margins when we remove this element.
         internal object INTERNAL_InnerDivOfTheChildWrapperOfTheParentIfAny { get; set; } // This is non-null only if the parent has a "ChildWrapper", that is, a DIV that it creates for each of its children. If it is the case, we store the "inner div" of that child wrapper. It is useful for alignment purposes (cf. alignment methods in the FrameworkElement class).
-        internal object INTERNAL_OptionalSpecifyDomElementConcernedByIsEnabled { get; set; } // This is optional. When set, it means that the "FrameworkElement.ManageIsEnabled" method sets the "disabled" property on this specified DOM element rather than on the INTERNAL_OuterDomElement. An example is the "CheckBox", which specifies a different DOM element for its "disabled" state.
         internal object INTERNAL_OptionalSpecifyDomElementConcernedByMinMaxHeightAndWidth { get; set; } // This is optional. When set, it means that the "FrameworkElement.MinHeight" and "MinWidth" properties are applied on this specified DOM element rather than on the INTERNAL_OuterDomElement. An example is the "TextBox", for which applying MinHeight to the outer DOM does not make the inner DOM bigger.
-        internal INTERNAL_CellDefinition INTERNAL_SpanParentCell = null; //this is used to know where we put the element when in a cell of a grid that is overlapped (due to the span or presence of another element that was put there previously), which causes it to be "sucked" into the basic cell of the previousl "placed" child.
         internal string INTERNAL_HtmlRepresentation { get; set; } // This can be used instead of overriding the "CreateDomElement" method to specify the appearance of the control.
         internal Dictionary<UIElement, INTERNAL_VisualChildInformation> INTERNAL_VisualChildrenInformation { get; set; } //todo-performance: verify that JavaScript output is a performant dictionary too, otherwise change structure.
         internal bool INTERNAL_RenderTransformOriginHasBeenApplied = false; // This is useful to ensure that the default RenderTransformOrigin is (0,0) like in normal XAML, instead of (0.5,0.5) like in CSS.
         //Note: the two following fields are only used in the PointerRoutedEventArgs class to determine how many clicks have been made on this UIElement in a short amount of time.
-        internal int INTERNAL_clickCount; //this is used in the PointerPressed event to fill the ClickCount Property.
-        internal int INTERNAL_lastClickDate; //this is used in the PointerPressed event to fill the ClickCount Property.
         public string XamlSourcePath; //this is used by the Simulator to tell where this control is defined. It is non-null only on root elements, that is, elements which class has "InitializeComponent" method. This member is public because it needs to be accessible via reflection.
         internal bool _isLoaded;
-        internal bool INTERNAL_EnableProgressiveLoading;
         internal Action INTERNAL_DeferredRenderingWhenControlBecomesVisible;
         internal Action INTERNAL_DeferredLoadingWhenControlBecomesVisible;
-
-        /// <summary>
-        /// Dictionary that helps link the validationErrors to the BindingExpressions for managing the errors.
-        /// </summary>
-        internal Dictionary<BindingExpression, ValidationError> INTERNAL_ValidationErrorsDictionary;
-
-        public Size RenderSize { get { return VisualBounds.Size; } }
-
-        public Size DesiredSize { get; private set; }
-        
-        internal Rect VisualBounds { get; set; }
-
-        internal bool IsMeasureValid { get; private set; }
-
-        internal bool IsArrangeValid { get; private set; }
-
-        internal bool IsRendered { get; private set; }
-
-        internal bool isFirstRendering;
-
-        internal Rect RenderedVisualBounds { get; private set; }
-
-        internal Rect PreviousFinalRect { get; private set; }
-
-        internal Size PreviousAvailableSize { get; private set; }
-
-        private Size previousDesiredSize;
-        private Size layoutMeasuredSize;
-        private Size layoutLastSize;
-        private bool layoutProcessing;
-
-        private int visualLevel;
-
-        internal int VisualLevel
-        {
-            get
-            {
-                if (visualLevel == -1)
-                {
-                    visualLevel = (VisualTreeHelper.GetParent(this) as UIElement)?.VisualLevel + 1 ?? 0;
-                }
-
-                return visualLevel;
-            }
-        }
-
-        internal bool IsCustomLayoutRoot
-        {
-            get
-            {
-                FrameworkElement parent = this as FrameworkElement;
-
-                if (parent.CustomLayout == false)
-                    return false;
-
-                FrameworkElement layoutRoot = null;
-                while (parent != null)
-                {
-                    if (parent.CustomLayout)
-                        layoutRoot = parent;
-                    parent = VisualTreeHelper.GetParent(parent) as FrameworkElement;
-                }
-
-                if (layoutRoot == null)
-                    return false;
-
-                return layoutRoot == this;
-            }
-        }
-
-        internal bool IsUnderCustomLayout
-        {
-            get
-            {
-                FrameworkElement parent = VisualTreeHelper.GetParent(this) as FrameworkElement;
-                
-                while (parent != null)
-                {
-                    if (parent.CustomLayout)
-                        return true;
-                    parent = VisualTreeHelper.GetParent(parent) as FrameworkElement;
-                }
-
-                return false;
-            }
-        }
 
         public UIElement()
         {
             DesiredSize = new Size();
             PreviousFinalRect = Rect.Empty;
+            RenderedVisualBounds = Rect.Empty;
             PreviousAvailableSize = new Size(double.PositiveInfinity, double.PositiveInfinity);
-            previousDesiredSize = Size.Empty;
-            layoutMeasuredSize = Size.Empty;
-            layoutLastSize = Size.Empty;
-            layoutProcessing = false;
+            _previousDesiredSize = Size.Empty;
+            _layoutMeasuredSize = Size.Empty;
+            _layoutLastSize = Size.Empty;
+            _layoutProcessing = false;
             IsMeasureValid = false;
             IsArrangeValid = false;
             IsRendered = false;
-            isFirstRendering = false;
-            visualLevel = -1;
+            IsFirstRendering = false;
+            _visualLevel = -1;
         }
         internal virtual object GetDomElementToSetContentString()
         {
@@ -518,7 +416,15 @@ namespace Windows.UI.Xaml
                 typeof(UIElement),
                 new PropertyMetadata(null, OnEffectChanged)
                 {
-                    MethodToUpdateDom = (d, e) => ((Effect)e)?.Render((UIElement)d)
+                    MethodToUpdateDom2 = (d, oldValue, newValue) =>
+                    {
+                        var uie = (UIElement)d;
+                        if (oldValue is Effect oldEffect)
+                        {
+                            oldEffect.Clean(uie);
+                        }
+                        ((Effect)newValue)?.Render(uie);
+                    }
                 });
 
         // todo: we may add the support for multiple effects on the same 
@@ -543,17 +449,27 @@ namespace Windows.UI.Xaml
         private static void OnEffectChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             UIElement element = (UIElement)d;
-            if (e.OldValue is Effect oldEffect)
+            
+            if (element._effectChangedListener != null)
             {
-                oldEffect.Changed -= new EventHandler(element.OnEffectChanged);
+                element._effectChangedListener.Detach();
+                element._effectChangedListener = null;
             }
+
             if (e.NewValue is Effect newEffect)
             {
-                newEffect.Changed += new EventHandler(element.OnEffectChanged);
+                element._effectChangedListener = new(element, newEffect)
+                {
+                    OnEventAction = static (instance, sender, args) => instance.OnEffectChanged(sender, args),
+                    OnDetachAction = static (listener, source) => source.Changed -= listener.OnEvent,
+                };
+                newEffect.Changed += element._effectChangedListener.OnEvent;
             }
         }
 
         private void OnEffectChanged(object sender, EventArgs e) => ((Effect)sender).Render(this);
+
+        private WeakEventListener<UIElement, Effect, EventArgs> _effectChangedListener;
 
 #endregion
 
@@ -751,18 +667,7 @@ namespace Windows.UI.Xaml
             if (INTERNAL_VisualTreeManager.IsElementInVisualTree(uiElement))
             {
                 // Get a reference to the most outer DOM element to show/hide:
-                object mostOuterDomElement = null;
-                if (VisualTreeHelper.GetParent(uiElement) is UIElement parent &&
-                    parent.INTERNAL_VisualChildrenInformation != null &&
-                    parent.INTERNAL_VisualChildrenInformation.ContainsKey(uiElement))
-                {
-                    mostOuterDomElement = parent.INTERNAL_VisualChildrenInformation[uiElement].INTERNAL_OptionalChildWrapper_OuterDomElement;
-                }
-                if (mostOuterDomElement == null)
-                {
-                    mostOuterDomElement = uiElement.INTERNAL_AdditionalOutsideDivForMargins ?? uiElement.INTERNAL_OuterDomElement;
-                }
-
+                object mostOuterDomElement = uiElement.INTERNAL_AdditionalOutsideDivForMargins ?? uiElement.INTERNAL_OuterDomElement;
                 var style = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(mostOuterDomElement);
 
                 // Apply the visibility:
@@ -859,7 +764,7 @@ namespace Windows.UI.Xaml
                 }
                 else
                 {
-                    constraintAllowsVisible = uie.IsConnectedToLiveTree;
+                    constraintAllowsVisible = INTERNAL_VisualTreeManager.IsElementInVisualTree(uie);
                 }
 
                 if (!constraintAllowsVisible)
@@ -1021,21 +926,6 @@ namespace Windows.UI.Xaml
             }
         }
 
-        internal bool INTERNAL_IsChildOf(UIElement element)
-        {
-            UIElement currentParent = this;
-            while (currentParent.INTERNAL_VisualParent != null)
-            {
-                if (currentParent.INTERNAL_VisualParent == element) //note: we check on the visual parent directly because we don't want to return true if the element itself (this) is the parameter element.
-                {
-                    return true;
-                }
-                currentParent = (UIElement)currentParent.INTERNAL_VisualParent;
-            }
-            return false;
-        }
-
-
 #region AllowDrop
 
         /// <summary>
@@ -1080,7 +970,6 @@ namespace Windows.UI.Xaml
         /// <summary>
         /// Sets pointer capture to a UIElement.
         /// </summary>
-        /// <param name="value">The pointer object reference.</param>
         /// <returns>True if the object has pointer capture; otherwise, false.</returns>
 #if MIGRATION
         public bool CaptureMouse()
@@ -1088,128 +977,7 @@ namespace Windows.UI.Xaml
         public bool CapturePointer(Pointer value = null)
 #endif
         {
-#if MIGRATION
-            Pointer value = null;
-#endif
-            return CapturePointer(value, this.INTERNAL_OuterDomElement);
-        }
-
-        private bool CapturePointer(Pointer value, object element) //note: when the pointer is already captured, trying to capture it again does absolutely nothing (even after releasing the first one)
-        {
-            // We set the events on document then reroute these events to the UIElement.
-            if (Pointer.INTERNAL_captured == null)
-            {
-                Pointer.INTERNAL_captured = this;
-
-                if (IsRunningInJavaScript())
-                {
-#if BRIDGE
-                    Bridge.Script.Write(@"
-     document.onmouseup = function(e) {
-        if(e.doNotReroute == undefined)
-        {
-               document.reroute(e, {0});
-        }
-    }
-     document.onmouseover = function(e) {
-       if(e.doNotReroute == undefined)
-        {
-               document.reroute(e, {0});
-        }
-    }       
-    document.onmousedown = function(e) {
-       if(e.doNotReroute == undefined)
-        {
-               document.reroute(e, {0});
-        }
-    }                               
-     document.onmouseout = function(e) {   
-       if(e.doNotReroute == undefined)
-        {
-               document.reroute(e, {0});
-        }
-    }                                      
-     document.onmousemove = function(e) {  
-       if(e.doNotReroute == undefined)
-        {
-               document.reroute(e, {0});
-        }
-    }                                      
-     document.onclick = function(e) {      
-       if(e.doNotReroute == undefined)
-        {
-               document.reroute(e, {0});
-        }
-    }                                      
-     document.oncontextmenu = function(e) {
-       if(e.doNotReroute == undefined)
-        {
-               document.reroute(e, {0});
-        }
-    }                                      
-     document.ondblclick = function(e) {   
-       if(e.doNotReroute == undefined)
-        {
-               document.reroute(e, {0});
-        }
-    }
-", element);
-#endif
-
-                    //javacript reroute function: taken from http://blog.stchur.com/blogcode/event-rerouting/
-                    //the following function is added in the cshtml5.js file
-                    //function reroute(e, elem, shiftKey)
-                    //{
-                    //    shiftKey = shiftKey || false;
-                    //
-                    //    var evt;
-                    //    if (typeof document.dispatchEvent !== 'undefined')
-                    //    {
-                    //        evt = document.createEvent('MouseEvents');
-                    //        evt.initMouseEvent(
-                    //           e.type				// event type
-                    //           ,e.bubbles			// can bubble?
-                    //           ,e.cancelable		// cancelable?
-                    //           ,window				// the event's abstract view (should always be window)
-                    //           ,e.detail			// mouse click count (or event "detail")
-                    //           ,e.screenX			// event's screen x coordinate
-                    //           ,e.screenY			// event's screen y coordinate
-                    //           ,e.pageX				// event's client x coordinate
-                    //           ,e.pageY				// event's client y coordinate
-                    //           ,e.ctrlKey			// whether or not CTRL was pressed during event
-                    //           ,e.altKey			// whether or not ALT was pressed during event
-                    //           ,shiftKey			// whether or not SHIFT was pressed during event
-                    //           ,e.metaKey			// whether or not the meta key was pressed during event
-                    //           ,e.button			// indicates which button (if any) caused the mouse event (1 = primary button)
-                    //           ,e.relatedTarget		// relatedTarget (only applicable for mouseover/mouseout events)
-                    //        );
-                    //        elem.dispatchEvent(evt);
-                    //    }
-                    //    else if (typeof document.fireEvent !== 'undefined')
-                    //    {
-                    //        evt = document.createEventObject(e);
-                    //        evt.shiftKey = shiftKey;
-                    //        elem.fireEvent('on' + e.type, evt);
-                    //    }
-                    //}
-
-                }
-                else
-                {
-                    string uid = ((INTERNAL_HtmlDomElementReference)element).UniqueIdentifier;
-                    string javaScriptCodeToExecute = $@"document.rerouteMouseEvents(""{uid}"")";
-                    INTERNAL_HtmlDomManager.ExecuteJavaScriptWithResult(javaScriptCodeToExecute);
-                }
-                return true;
-            }
-            else if (Pointer.INTERNAL_captured == this)
-            {
-                return true;
-            }
-            else
-            {
-                return false;
-            }
+            return InputManager.Current.CaptureMouse(this);
         }
 
         /// <summary>
@@ -1230,78 +998,26 @@ namespace Windows.UI.Xaml
         /// <summary>
         /// Releases pointer captures for capture of one specific pointer by this UIElement.
         /// </summary>
-        /// <param name="value">
-        /// The pointer reference. Use either saved references from previous captures,
-        /// or pointer event data, to obtain this reference.
-        /// </param>
 #if MIGRATION
         public void ReleaseMouseCapture()
 #else
         public void ReleasePointerCapture(Pointer value = null)
 #endif
         {
-            if (IsRunningInJavaScript())
-            {
-                if (Pointer.INTERNAL_captured != null)
-                {
-#if !BRIDGE
-                    JSIL.Verbatim.Expression(@"
- document.onmousedown = null;
- document.onmouseup = null;
- document.onmouseover = null;
- document.onmouseout = null;
- document.onmousemove = null;
- document.onclick = null;
- document.oncontextmenu = null;
- document.ondblclick = null;
-");
-#else
-                    Bridge.Script.Write(@"
- document.onmousedown = null;
- document.onmouseup = null;
- document.onmouseover = null;
- document.onmouseout = null;
- document.onmousemove = null;
- document.onclick = null;
- document.oncontextmenu = null;
- document.ondblclick = null;
-");
+            InputManager.Current.ReleaseMouseCapture(this);
+        }
 
-#endif
-
-                    Pointer.INTERNAL_captured = null;
 #if MIGRATION
-                    OnLostMouseCapture(new MouseEventArgs());
+        internal void OnLostMouseCapturedInternal(MouseEventArgs e)
 #else
-                    OnPointerCaptureLost(new PointerRoutedEventArgs());
+        internal void OnLostMouseCapturedInternal(PointerRoutedEventArgs e)
 #endif
-                }
-            }
-            else
-            {
-                if (Pointer.INTERNAL_captured != null)
-                {
-                    //todo: remove "string.Format" on the next line when JSIL will be able to compile without it (there is currently an issue with JSIL).
-                    string javaScriptCodeToExecute = @"
-document.onselectstart = null;
-document.onmousedown = null;
-document.onmouseup = null;
-document.onmouseover = null;
-document.onmouseout = null;
-document.onmousemove = null;
-document.onclick = null;
-document.oncontextmenu = null;
-document.ondblclick = null;
-";
-                    INTERNAL_HtmlDomManager.ExecuteJavaScript(javaScriptCodeToExecute);
-                    Pointer.INTERNAL_captured = null;
+        {
 #if MIGRATION
-                    OnLostMouseCapture(new MouseEventArgs());
+            OnLostMouseCapture(e);
 #else
-                    OnPointerCaptureLost(new PointerRoutedEventArgs());
+            OnPointerCaptureLost(e);
 #endif
-                }
-            }
         }
 
 #if MIGRATION
@@ -1360,8 +1076,8 @@ document.ondblclick = null;
                 // Note: "none" disables scrolling, pinching and other gestures.
                 // It is supposed to not have any effect on the "TouchStart",
                 // "TouchMove", and "TouchEnd" events.
-                CSHTML5.Interop.ExecuteJavaScript("$0.style.touchAction = $1",
-                    element.INTERNAL_OuterDomElement, (bool)e.NewValue ? "auto" : "none");
+                OpenSilver.Interop.ExecuteJavaScriptVoid(
+                    $"{CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(element.INTERNAL_OuterDomElement)}.style.touchAction = \"{((bool)e.NewValue ? "auto" : "none")}\"");
             }
         }
 
@@ -1403,7 +1119,7 @@ document.ondblclick = null;
         /// </returns>
         public GeneralTransform TransformToVisual(UIElement visual)
         {
-            if (!IsConnectedToLiveTree)
+            if (!INTERNAL_VisualTreeManager.IsElementInVisualTree(this))
             {
                 throw new ArgumentException();
             }
@@ -1416,7 +1132,7 @@ document.ondblclick = null;
             object outerDivOfReferenceVisual;
             if (visual != null)
             {
-                if (!visual.IsConnectedToLiveTree)
+                if (!INTERNAL_VisualTreeManager.IsElementInVisualTree(visual))
                 {
                     throw new ArgumentException(nameof(visual));
                 }
@@ -1434,40 +1150,66 @@ document.ondblclick = null;
                 outerDivOfReferenceVisual = rootVisual.INTERNAL_OuterDomElement;
             }
 
-            double offsetLeft, offsetTop;
-            if (CSharpXamlForHtml5.Environment.IsRunningInJavaScript)
-            {
-                // ------- IN-BROWSER -------
-                var rectOfThisControl = ((dynamic)outerDivOfThisControl).getBoundingClientRect();
-                var rectOfReferenceVisual = ((dynamic)outerDivOfReferenceVisual).getBoundingClientRect();
-
-                offsetLeft = rectOfThisControl.left - rectOfReferenceVisual.left;
-                offsetTop = rectOfThisControl.top - rectOfReferenceVisual.top;
-            }
-            //#if !BRIDGE
-            else
-            {
-                // ------- SIMULATOR -------
-
-                // Hack to improve the Simulator performance by making only one interop call rather than two:
-                string concatenated = Convert.ToString(OpenSilver.Interop.ExecuteJavaScript("($0.getBoundingClientRect().left - $1.getBoundingClientRect().left) + '|' + ($0.getBoundingClientRect().top - $1.getBoundingClientRect().top)",
-                    outerDivOfThisControl, outerDivOfReferenceVisual));
-                int sepIndex = concatenated.IndexOf('|');
-                string offsetLeftAsString = concatenated.Substring(0, sepIndex);
-                string offsetTopAsString = concatenated.Substring(sepIndex + 1);
-                offsetLeft = Convert.ToDouble(offsetLeftAsString, CultureInfo.InvariantCulture);
-                offsetTop = Convert.ToDouble(offsetTopAsString, CultureInfo.InvariantCulture);
-            }
-            //#endif
+            // Hack to improve the Simulator performance by making only one interop call rather than two:
+            string sOuterDivOfControl = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(outerDivOfThisControl);
+            string sOuterDivOfReferenceVisual = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(outerDivOfReferenceVisual);
+            string concatenated = OpenSilver.Interop.ExecuteJavaScriptString(
+                $"({sOuterDivOfControl}.getBoundingClientRect().left - {sOuterDivOfReferenceVisual}.getBoundingClientRect().left) + '|' + ({sOuterDivOfControl}.getBoundingClientRect().top - {sOuterDivOfReferenceVisual}.getBoundingClientRect().top)");
+            int sepIndex = concatenated.IndexOf('|');
+            string offsetLeftAsString = concatenated.Substring(0, sepIndex);
+            string offsetTopAsString = concatenated.Substring(sepIndex + 1);
+            double offsetLeft = Convert.ToDouble(offsetLeftAsString, CultureInfo.InvariantCulture);
+            double offsetTop = Convert.ToDouble(offsetTopAsString, CultureInfo.InvariantCulture);
 
             return new MatrixTransform(new Matrix(1, 0, 0, 1, offsetLeft, offsetTop));
+        }
+
+        /// <summary>
+        /// Use this method for better performance in the Simulator compared to 
+        /// requesting the ActualWidth and ActualHeight separately.
+        /// </summary>
+        /// <returns>
+        /// The actual size of the element.
+        /// </returns>
+        internal Size GetBoundingClientSize()
+        {
+            if (INTERNAL_VisualTreeManager.IsElementInVisualTree(this))
+            {
+                return INTERNAL_HtmlDomManager.GetBoundingClientSize(INTERNAL_OuterDomElement);
+            }
+
+            return new Size();
+        }
+
+        internal bool IsDescendantOf(DependencyObject ancestor)
+        {
+            if (ancestor is null)
+            {
+                throw new ArgumentNullException(nameof(ancestor));
+            }
+
+            if (ancestor is not UIElement)
+            {
+                throw new ArgumentException($"ancestor must be a UIElement.");
+            }
+
+            // Walk up the parent chain of the descendant until we run out
+            // of parents or we find the ancestor.
+            DependencyObject current = this;
+
+            while ((current != null) && (current != ancestor))
+            {
+                current = VisualTreeHelper.GetParent(current);
+            }
+
+            return current == ancestor;
         }
 
         //internal virtual void INTERNAL_Render()
         //{
         //}
 
-#region ForceInherit property support
+        #region ForceInherit property support
 
         internal static void SynchronizeForceInheritProperties(UIElement uie, DependencyObject parent)
         {
@@ -1485,9 +1227,12 @@ document.ondblclick = null;
             {
                 uie.UpdateIsVisible();
             }
+
+            // visual parent does not always match layout parent, so we cannot use it.
+            uie.CoerceValue(FrameworkElement.CustomLayoutProperty);
         }
 
-        internal virtual void InvalidateForceInheritPropertyOnChildren(DependencyProperty property)
+        internal void InvalidateForceInheritPropertyOnChildren(DependencyProperty property)
         {
             int cChildren = this.VisualChildrenCount;
             for (int i = 0; i < cChildren; i++)
@@ -1552,279 +1297,6 @@ document.ondblclick = null;
         {
             //
         }
-
-        public void Arrange(Rect finalRect)
-        {
-            if (this.INTERNAL_OuterDomElement == null)
-            {
-                LayoutManager.Current.RemoveArrange(this);
-                PreviousFinalRect = finalRect;
-                IsArrangeValid = true;
-                IsRendered = false;
-                return;
-            }
-
-#if MIGRATION
-            using (System.Windows.Threading.Dispatcher.INTERNAL_GetCurrentDispatcher().DisableProcessing())
-#else
-            using (Windows.UI.Core.CoreDispatcher.INTERNAL_GetCurrentDispatcher().DisableProcessing())
-#endif
-            {
-                bool previousArrangeValid = IsArrangeValid;
-                Rect savedPreviousFinalRect = PreviousFinalRect;
-                PreviousFinalRect = finalRect;
-                IsArrangeValid = true;
-
-                LayoutManager.Current.RemoveArrange(this);
-
-                if (Visibility != Visibility.Visible) {
-                    IsRendered = false;
-                    return;
-                }
-
-                if (IsRendered && previousArrangeValid && finalRect.Location.IsClose(savedPreviousFinalRect.Location) && finalRect.Size.IsClose(savedPreviousFinalRect.Size))
-                    return;
-
-                if (!IsMeasureValid)
-                {
-                    Size previousDesiredSizeInArrange = this.DesiredSize;
-                    Measure(this.PreviousAvailableSize);
-                    if (previousDesiredSizeInArrange != this.DesiredSize)
-                    {
-                        this.InvalidateParentMeasure();
-                        this.InvalidateParentArrange();
-                    }
-                }
-
-                ArrangeCore(finalRect);
-
-                PreviousFinalRect = finalRect;
-
-                // Render with new size & location
-                Render();
-
-                LayoutManager.Current.AddUpdatedElement(this);
-            }
-        }
-
-        private void Render()
-        {
-            if (IsCustomLayoutRoot)
-            {
-                IsRendered = true;
-                if (RenderedVisualBounds.Equals(VisualBounds) == false)
-                {
-                    FrameworkElement fe = this as FrameworkElement;
-
-                    if (RenderedVisualBounds.Width.Equals(VisualBounds.Width) == false && fe.IsAutoWidthOnCustomLayoutInternal)
-                        INTERNAL_HtmlDomManager.GetDomElementStyleForModification(this.INTERNAL_OuterDomElement).width = VisualBounds.Width.ToInvariantString() + "px";
-
-                    if (RenderedVisualBounds.Height.Equals(VisualBounds.Height) == false && fe.IsAutoHeightOnCustomLayoutInternal)
-                        INTERNAL_HtmlDomManager.GetDomElementStyleForModification(this.INTERNAL_OuterDomElement).height = VisualBounds.Height.ToInvariantString() + "px";
-
-                    RenderedVisualBounds = VisualBounds;
-                }
-                return;
-            }
-
-            if (this as Window == null && this as PopupRoot == null)
-            {
-                INTERNAL_HtmlDomStyleReference uiStyle = INTERNAL_HtmlDomManager.GetDomElementStyleForModification((INTERNAL_HtmlDomElementReference)this.INTERNAL_OuterDomElement);
-                if (RenderedVisualBounds.Equals(VisualBounds) == false)
-                {
-                    RenderedVisualBounds = VisualBounds;
-
-                    if (this.IsRendered == false)
-                    {
-                        INTERNAL_HtmlDomManager.SetVisualBounds(uiStyle, VisualBounds, true, false, false);
-                        this.IsRendered = true;
-                    }
-                    else
-                    {
-                        INTERNAL_HtmlDomManager.SetVisualBounds(uiStyle, VisualBounds, false, false, false);
-                    }
-                }
-            }
-        }
-
-        internal virtual void ArrangeCore(Rect finalRect)
-        {
-
-        }
-
-        internal virtual Size MeasureCore(Size availableSize)
-        {
-            return Size.Empty;
-        }
-
-        public void Measure(Size availableSize)
-        {
-            if (this.INTERNAL_OuterDomElement == null)
-            {
-                LayoutManager.Current.RemoveMeasure(this);
-                PreviousAvailableSize = availableSize;
-                IsMeasureValid = true;
-                return;
-            }
-
-#if MIGRATION
-            using (System.Windows.Threading.Dispatcher.INTERNAL_GetCurrentDispatcher().DisableProcessing())
-#else
-            using (Windows.UI.Core.CoreDispatcher.INTERNAL_GetCurrentDispatcher().DisableProcessing())
-#endif
-            {
-                bool previousMeasureValid = IsMeasureValid;
-                Size savedPreviousAvailableSize = PreviousAvailableSize;
-                PreviousAvailableSize = availableSize;
-                IsMeasureValid = true;
-
-                LayoutManager.Current.RemoveMeasure(this);
-
-                if (this.IsVisible == false)
-                {
-                    DesiredSize = new Size();
-                    previousDesiredSize = Size.Empty;
-                    return;
-                }
-                else if (previousMeasureValid && savedPreviousAvailableSize.IsClose(availableSize) && previousDesiredSize != Size.Empty)
-                {
-                    if (LayoutManager.Current.CheckChildMeasureValidation(this) == false)
-                    {
-                        DesiredSize = previousDesiredSize;
-                        return;
-                    }
-                }
-
-                Size previousDesiredSizeInMeasure = this.DesiredSize;
-                DesiredSize = MeasureCore(availableSize);
-                if (previousDesiredSizeInMeasure != DesiredSize)
-                {
-                    this.InvalidateArrange();
-                }
-
-                PreviousAvailableSize = availableSize;
-                previousDesiredSize = DesiredSize;
-            }
-        }
-
-        public void InvalidateArrange()
-        {
-            if (!IsArrangeValid)
-            {
-                return;
-            }
-
-            IsArrangeValid = false;
-
-            LayoutManager.Current.AddArrange(this);
-        }
-
-        internal void InvalidateParentMeasure()
-        {
-            UIElement parent = VisualTreeHelper.GetParent(this) as UIElement;
-            if (parent is GridNotLogical)
-            {
-                parent.InvalidateParentMeasure();
-                return;
-            }
-            parent?.InvalidateMeasure();
-        }
-
-        internal void InvalidateParentArrange()
-        {
-            UIElement parent = VisualTreeHelper.GetParent(this) as UIElement;
-            if (parent is GridNotLogical)
-            {
-                parent.InvalidateParentArrange();
-                return;
-            }
-            parent?.InvalidateArrange();
-        }
-        
-        public void InvalidateMeasure()
-        {
-            if (!IsMeasureValid)
-            {
-                return;
-            }
-
-            IsMeasureValid = false;
-
-            LayoutManager.Current.AddMeasure(this);
-        }
-
-        internal void ClearMeasureAndArrangeValidation()
-        {
-            if (!this.IsCustomLayoutRoot)
-            {
-                this.IsArrangeValid = false;
-                this.IsMeasureValid = false;
-            }
-            this.IsRendered = false;
-            this.RenderedVisualBounds = Rect.Empty;
-            this.previousDesiredSize = Size.Empty;
-        }
-
-        public void UpdateLayout()
-        {
-
-        }
-
-        internal void UpdateCustomLayout(Size newSize)
-        {
-            layoutLastSize = newSize;
-            if (layoutProcessing)
-                return;
-
-            layoutProcessing = true;
-            Dispatcher.BeginInvoke((Action)BeginUpdateCustomLayout);
-        }
-
-        private void BeginUpdateCustomLayout()
-        {
-            Size savedLastSize = layoutLastSize;
-            Size availableSize = layoutLastSize;
-            FrameworkElement fe = this as FrameworkElement;
-            if (fe != null)
-            {
-                if (fe.IsAutoWidthOnCustomLayoutInternal)
-                    availableSize.Width = double.PositiveInfinity;
-                if (fe.IsAutoHeightOnCustomLayoutInternal)
-                    availableSize.Height = double.PositiveInfinity;
-            }
-            if (layoutMeasuredSize == availableSize)
-            {
-                layoutProcessing = false;
-                return;
-            }
-            
-            Measure(availableSize);
-            layoutMeasuredSize = availableSize;
-
-            if (savedLastSize != layoutLastSize)
-            {
-                BeginUpdateCustomLayout();
-                return;
-            }
-            if (fe != null)
-            {
-                if (fe.IsAutoWidthOnCustomLayoutInternal)
-                    availableSize.Width = Math.Max(this.DesiredSize.Width, savedLastSize.Width);
-
-                if (fe.IsAutoHeightOnCustomLayoutInternal)
-                    availableSize.Height = Math.Max(this.DesiredSize.Height, savedLastSize.Height);
-            }
-
-            Arrange(new Rect(availableSize));
-            if (savedLastSize != layoutLastSize)
-            {
-                BeginUpdateCustomLayout();
-                return;
-            }
-
-            layoutProcessing = false;
-        }
-
     }
 
     [Flags]

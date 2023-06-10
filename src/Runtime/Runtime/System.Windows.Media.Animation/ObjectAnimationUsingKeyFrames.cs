@@ -20,6 +20,8 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Markup;
+using System.ComponentModel;
+using System.Globalization;
 #if MIGRATION
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -111,44 +113,7 @@ namespace Windows.UI.Xaml.Media.Animation
         internal override void GetTargetInformation(IterationParameters parameters)
         {
             _parameters = parameters;
-            DependencyObject target;
-            PropertyPath propertyPath;
-            DependencyObject targetBeforePath;
-            GetPropertyPathAndTargetBeforePath(parameters, out targetBeforePath, out propertyPath);
-            DependencyObject parentElement = targetBeforePath; //this will be the parent of the clonable element (if any).
-            foreach (Tuple<DependencyObject, DependencyProperty, int?> element in GoThroughElementsToAccessProperty(propertyPath, targetBeforePath))
-            {
-                DependencyObject depObject = element.Item1;
-                DependencyProperty depProp = element.Item2;
-                int? index = element.Item3;
-                if (depObject is ICloneOnAnimation)
-                {
-                    if (!((ICloneOnAnimation)depObject).IsAlreadyAClone())
-                    {
-                        object clone = ((ICloneOnAnimation)depObject).Clone();
-                        if (index != null)
-                        {
-#if BRIDGE
-                            parentElement.GetType().GetProperty("Item").SetValue(parentElement, clone, new object[] { index });
-#else
-                            //JSIL does not support SetValue(object, object, object[])
-#endif
-                        }
-                        else
-                        {
-                            parentElement.SetValue(depProp, clone);
-                        }
-                    }
-                    break;
-                }
-                else
-                {
-                    parentElement = depObject;
-                }
-            }
-
-            GetTargetElementAndPropertyInfo(parameters, out target, out propertyPath);
-
+            GetTargetElementAndPropertyInfo(parameters, out DependencyObject target, out PropertyPath propertyPath);
             _propertyContainer = target;
             _targetProperty = propertyPath;
             _propDp = GetProperty(_propertyContainer, _targetProperty);
@@ -170,21 +135,24 @@ namespace Windows.UI.Xaml.Media.Animation
         private void ApplyKeyFrame(ObjectKeyFrame keyFrame)
         {
             object value = keyFrame.Value;
-            if (value is string && _propDp.PropertyType != typeof(string))
+
+            if (value != null && !_propDp.PropertyType.IsInstanceOfType(value))
             {
-                if (_propDp.PropertyType.IsEnum)
+                if (value is Color color && _propDp.PropertyType == typeof(Brush))
                 {
-                    value = Enum.Parse(_propDp.PropertyType, (string)value);
+                    value = new SolidColorBrush(color);
                 }
                 else
                 {
-                    value = DotNetForHtml5.Core.TypeFromStringConverters.ConvertFromInvariantString(_propDp.PropertyType, (string)value);
+                    TypeConverter converter = TypeConverterHelper.GetConverter(_propDp.PropertyType);
+                    if (converter != null && converter.CanConvertFrom(value.GetType()))
+                    {
+                        value = converter.ConvertFrom(null, CultureInfo.InvariantCulture, value);
+                    }
                 }
             }
 
-            object castedValue = DynamicCast(value, _propDp.PropertyType);
-
-            AnimationHelpers.ApplyValue(_propertyContainer, _targetProperty, castedValue);
+            AnimationHelpers.ApplyValue(_propertyContainer, _targetProperty, value);
         }
 
         private ObjectKeyFrame GetNextKeyFrame()
@@ -255,26 +223,6 @@ namespace Windows.UI.Xaml.Media.Animation
             this.Completed -= ApplyLastKeyFrame;
             this.Completed += ApplyLastKeyFrame;
             InitializeKeyFramesSet();
-        }
-
-        internal override void RestoreDefaultCore()
-        {
-            ResetAllTimers();
-            _appliedKeyFramesCount = 0;
-        }
-
-        private void ResetAllTimers()
-        {
-            if (_keyFramesToObjectTimers != null)
-            {
-                if (_keyFramesToObjectTimers.Values != null)
-                {
-                    foreach (var frameTimers in _keyFramesToObjectTimers.Values)
-                    {
-                        frameTimers.Reset();
-                    }
-                }
-            }
         }
 
         protected override Duration GetNaturalDurationCore()
@@ -352,15 +300,6 @@ namespace Windows.UI.Xaml.Media.Animation
                 if (HasTimer)
                 {
                     _timer.Stop();
-                }
-            }
-
-            internal void Reset()
-            {
-                if (HasTimer)
-                {
-                    _timer.Stop();
-                    _timer = NewTimer(_timer.Interval);
                 }
             }
         }

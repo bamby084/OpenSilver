@@ -4,6 +4,7 @@
 // All other rights reserved.
 
 using System.Diagnostics;
+using OpenSilver.Internal;
 
 #if MIGRATION
 using System.Windows.Automation.Peers;
@@ -46,13 +47,13 @@ namespace Windows.UI.Xaml.Controls
 
         private const string DATAGRIDCELL_elementRightGridLine = "RightGridLine";
 
-#endregion Constants
+        #endregion Constants
 
-#region Data
+        #region Data
 
-        private Rectangle _rightGridLine;
+        private IRectangleAdapter _rightGridLine;
 
-#endregion Data
+        #endregion Data
 
         public DataGridCell()
         {
@@ -263,7 +264,8 @@ namespace Windows.UI.Xaml.Controls
 
             ApplyCellState(false /*animate*/);
             
-            this._rightGridLine = GetTemplateChild(DATAGRIDCELL_elementRightGridLine) as Rectangle;
+            this._rightGridLine = RectangleAdapterProvider.From(GetTemplateChild(DATAGRIDCELL_elementRightGridLine));
+
             if (_rightGridLine != null && this.OwningColumn == null)
             {
                 // Turn off the right GridLine for filler cells

@@ -17,10 +17,12 @@ using OpenSilver.Internal.Controls;
 
 #if MIGRATION
 using System.Windows.Automation.Peers;
+using System.Windows.Input;
 using System.Windows.Media;
 #else
 using Windows.Foundation;
 using Windows.UI.Xaml.Automation.Peers;
+using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Media;
 #endif
 
@@ -34,32 +36,42 @@ namespace Windows.UI.Xaml.Controls
     /// <summary>
     /// Represents a control for entering passwords.
     /// </summary>
+    [TemplatePart(Name = ContentElementName, Type = typeof(FrameworkElement))]
+    [TemplateVisualState(Name = VisualStates.StateDisabled, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateMouseOver, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateNormal, GroupName = VisualStates.GroupCommon)]
+    [TemplateVisualState(Name = VisualStates.StateFocused, GroupName = VisualStates.GroupFocus)]
+    [TemplateVisualState(Name = VisualStates.StateUnfocused, GroupName = VisualStates.GroupFocus)]
+    [TemplateVisualState(Name = VisualStates.StateValid, GroupName = VisualStates.GroupValidation)]
+    [TemplateVisualState(Name = VisualStates.StateInvalidUnfocused, GroupName = VisualStates.GroupValidation)]
+    [TemplateVisualState(Name = VisualStates.StateInvalidFocused, GroupName = VisualStates.GroupValidation)]
     public class PasswordBox : Control
     {
+        private const string ContentElementName = "ContentElement"; // Sl & UWP
+        private const string ContentElementName_WPF = "PART_ContentHost"; // WPF
+
+        private bool _isFocused;
         private FrameworkElement _contentElement;
         private ITextBoxViewHost<PasswordBoxView> _textViewHost;
 
-        private readonly string[] TextAreaContainerNames = { "ContentElement", "PART_ContentHost" };
-
         public PasswordBox()
         {
-            this.DefaultStyleKey = typeof(PasswordBox);
+            DefaultStyleKey = typeof(PasswordBox);
+            IsEnabledChanged += (o, e) => UpdateVisualStates();
         }
 
-        internal override object GetFocusTarget() => _textViewHost?.View?.InputDiv;
-
-        internal sealed override bool INTERNAL_GetFocusInBrowser => true;
+        internal sealed override object GetFocusTarget() => _textViewHost?.View?.InputDiv;
 
         /// <summary>
         /// The DependencyID for the PasswordChar property.
-        /// Default Value: '●'
+        /// Default Value: '•'
         /// </summary>
         public static readonly DependencyProperty PasswordCharProperty =
             DependencyProperty.Register(
                 nameof(PasswordChar), 
                 typeof(char), 
                 typeof(PasswordBox), 
-                new PropertyMetadata('●'));
+                new PropertyMetadata('•'));
 
         /// <summary>
         /// Character to display instead of the actual password.
@@ -174,7 +186,85 @@ namespace Windows.UI.Xaml.Controls
             }
         }
 
-#endregion
+        #endregion
+
+#if MIGRATION
+        protected override void OnMouseEnter(MouseEventArgs e)
+#else
+        protected override void OnPointerEntered(PointerRoutedEventArgs e)
+#endif
+        {
+#if MIGRATION
+            base.OnMouseEnter(e);
+#else
+            base.OnPointerEntered(e);
+#endif
+            UpdateVisualStates();
+        }
+
+#if MIGRATION
+        protected override void OnMouseLeave(MouseEventArgs e)
+#else
+        protected override void OnPointerExited(PointerRoutedEventArgs e)
+#endif
+        {
+#if MIGRATION
+            base.OnMouseLeave(e);
+#else
+            base.OnPointerExited(e);
+#endif
+            UpdateVisualStates();
+        }
+
+        protected override void OnGotFocus(RoutedEventArgs e)
+        {
+            base.OnGotFocus(e);
+            _isFocused = true;
+            UpdateVisualStates();
+        }
+
+        protected override void OnLostFocus(RoutedEventArgs e)
+        {
+            base.OnLostFocus(e);
+            _isFocused = false;
+            UpdateVisualStates();
+        }
+
+#if MIGRATION
+        protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+#else
+        protected override void OnPointerPressed(PointerRoutedEventArgs e)
+#endif
+        {
+#if MIGRATION
+            base.OnMouseLeftButtonDown(e);
+#else
+            base.OnPointerPressed(e);
+#endif
+
+            if (e.Handled)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            Focus();
+        }
+
+#if MIGRATION
+        protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+#else
+        protected override void OnPointerReleased(PointerRoutedEventArgs e)
+#endif
+        {
+#if MIGRATION
+            base.OnMouseLeftButtonUp(e);
+#else
+            base.OnPointerReleased(e);
+#endif
+
+            e.Handled = true;
+        }
 
         /// <summary>
         /// Builds the visual tree for the <see cref="PasswordBox" /> 
@@ -194,20 +284,16 @@ namespace Windows.UI.Xaml.Controls
                 _contentElement = null;
             }
 
-            FrameworkElement contentElement = null;
-
-            int i = 0;
-            while (contentElement == null && i < TextAreaContainerNames.Length)
-            {
-                contentElement = GetTemplateChild(TextAreaContainerNames[i]) as FrameworkElement;
-                ++i;
-            }
+            FrameworkElement contentElement = GetTemplateChild(ContentElementName) as FrameworkElement
+                ?? GetTemplateChild(ContentElementName_WPF) as FrameworkElement;
 
             if (contentElement != null)
             {
                 _contentElement = contentElement;
                 InitializeContentElement();
             }
+
+            UpdateVisualStates();
         }
 
         private PasswordBoxView CreateView()
@@ -222,7 +308,6 @@ namespace Windows.UI.Xaml.Controls
             if (_textViewHost != null)
             {
                 PasswordBoxView view = CreateView();
-                view.Loaded += new RoutedEventHandler(OnViewLoaded);
 
                 _textViewHost.AttachView(view);
             }
@@ -232,21 +317,9 @@ namespace Windows.UI.Xaml.Controls
         {
             if (_textViewHost != null)
             {
-                _textViewHost.View.Loaded -= new RoutedEventHandler(OnViewLoaded);
-
                 _textViewHost.DetachView();
                 _textViewHost = null;
             }
-        }
-
-        private void OnViewLoaded(object sender, RoutedEventArgs e)
-        {
-            if (!IsLoaded)
-            {
-                return;
-            }
-
-            UpdateTabIndex(IsTabStop, TabIndex);
         }
 
         protected override AutomationPeer OnCreateAutomationPeer()
@@ -257,10 +330,42 @@ namespace Windows.UI.Xaml.Controls
         /// </summary>
         public void SelectAll()
         {
-            OpenSilver.Interop.ExecuteJavaScriptAsync(@"$0.setSelectionRange(0, $0.value.length)", this.INTERNAL_InnerDomElement);
+            if (INTERNAL_InnerDomElement is null)
+            {
+                return;
+            }
+
+            string sDiv = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(INTERNAL_InnerDomElement);
+            OpenSilver.Interop.ExecuteJavaScriptFastAsync(
+                $"{sDiv}.setSelectionRange(0, {sDiv}.value.length)");
         }
 
-#region Not supported yet
+        internal override void UpdateVisualStates()
+        {
+            if (!IsEnabled)
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateDisabled, false);
+            }
+            else if (IsPointerOver)
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateMouseOver, false);
+            }
+            else
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateNormal, false);
+            }
+
+            if (_isFocused)
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateFocused, false);
+            }
+            else
+            {
+                VisualStateManager.GoToState(this, VisualStates.StateUnfocused, false);
+            }
+        }
+
+        #region Not supported yet
 
         [OpenSilver.NotImplemented]
         public static readonly DependencyProperty CaretBrushProperty = DependencyProperty.Register("CaretBrush", typeof(Brush), typeof(PasswordBox), null);
@@ -311,14 +416,5 @@ namespace Windows.UI.Xaml.Controls
         }
 
 #endregion
-
-        protected override Size MeasureOverride(Size availableSize)
-        {
-            Size BorderThicknessSize = new Size(BorderThickness.Left + BorderThickness.Right, BorderThickness.Top + BorderThickness.Bottom);
-            Size TextSize = Application.Current.TextMeasurementService.Measure(String.Empty, FontSize, FontFamily, FontStyle, FontWeight, /*FontStretch, */TextWrapping.NoWrap, Padding, (availableSize.Width - BorderThicknessSize.Width).Max(0));
-            TextSize.Width = TextSize.Width + BorderThicknessSize.Width;
-            TextSize.Height = TextSize.Height + BorderThicknessSize.Height;
-            return TextSize;
-        }
     }
 }

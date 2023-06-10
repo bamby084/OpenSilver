@@ -104,7 +104,7 @@ namespace OpenSilver.Internal.Xaml
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static void InitializeNameScope(DependencyObject dependencyObject)
         {
-            Debug.Assert(dependencyObject is FrameworkElement);
+            Debug.Assert(dependencyObject is IFrameworkElement);
 
             NameScope.SetNameScope(dependencyObject, new NameScope());
         }
@@ -140,6 +140,12 @@ namespace OpenSilver.Internal.Xaml
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
+        public static void SetTemplatedParent(IFrameworkElement element, IFrameworkElement templatedParent)
+        {
+            ((IInternalFrameworkElement)element).TemplatedParent = (DependencyObject)templatedParent;
+        }
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static XamlContext Create_XamlContext()
         {
             return new XamlContext();
@@ -152,9 +158,53 @@ namespace OpenSilver.Internal.Xaml
             Debug.Assert(xamlContext != null);
             Debug.Assert(factory != null);
 
-            template.Template = new TemplateContent(xamlContext, factory);
+            template.Template = new TemplateContent(xamlContext, (e, c) => factory((FrameworkElement)e, c));
         }
-    
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static void SetTemplateContent(FrameworkTemplate template, XamlContext xamlContext, Func<IFrameworkElement, XamlContext, IFrameworkElement> factory)
+        {
+            Debug.Assert(template != null);
+            Debug.Assert(xamlContext != null);
+            Debug.Assert(factory != null);
+
+            template.Template = new TemplateContent(xamlContext, (e, c) => (IInternalFrameworkElement)factory(e, c));
+        }
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static T XamlContext_WriteStartObject<T>(XamlContext context, T instance)
+        {
+            Debug.Assert(context != null);
+
+            context.PushScope();
+            context.CurrentInstance = instance;
+
+            // Silverlight does not call BeginInit/EndInit on the root instance of the xaml page.
+            if (context.Depth > 1 && instance is ISupportInitialize init)
+            {
+                init.BeginInit();
+            }
+
+            return instance;
+        }
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static void XamlContext_WriteEndObject(XamlContext context)
+        {
+            Debug.Assert(context != null);
+
+            object currentInstance = context.CurrentInstance;
+
+            // Silverlight does not call BeginInit/EndInit on the root instance of the xaml page.
+            if (context.Depth > 1 && currentInstance is ISupportInitialize init)
+            {
+                init.EndInit();
+            }
+
+            context.PopScope();
+        }
+
+        [Obsolete("Use RuntimeHelpers.XamlContext_WriteStartObject instead.", true)]
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static T XamlContext_PushScope<T>(XamlContext context, T instance)
         {
@@ -166,14 +216,15 @@ namespace OpenSilver.Internal.Xaml
             return instance;
         }
 
+        [Obsolete("Use RuntimeHelpers.XamlContext_WriteEndObject instead.", true)]
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static void XamlContext_PopScope(XamlContext context)
         {
             Debug.Assert(context != null);
-            
+
             context.PopScope();
         }
-        
+
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static void XamlContext_SetConnectionId(XamlContext context, int connectionId, object instance)
         {
@@ -204,6 +255,13 @@ namespace OpenSilver.Internal.Xaml
             {
                 timeline.NameResolver = context.NameResolver;
             }
+        }
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static void UIElement_SetKeepHiddenInFirstRender(UIElement uie, bool value)
+        {
+            Debug.Assert(uie != null);
+            uie.KeepHiddenInFirstRender = value;
         }
     }
 }

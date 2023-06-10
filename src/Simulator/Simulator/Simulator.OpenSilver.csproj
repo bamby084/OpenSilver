@@ -11,7 +11,7 @@
     <RootNamespace>DotNetForHtml5.EmulatorWithoutJavascript</RootNamespace>
     <OutputPath>bin\OpenSilver\$(Configuration)\</OutputPath>
     <DocumentationFile>bin\OpenSilver\$(Configuration)\OpenSilver.Simulator.xml</DocumentationFile>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
     <DebugType>full</DebugType>
     <Optimize>true</Optimize>
     <FileAlignment>512</FileAlignment>
@@ -52,7 +52,7 @@
     <Compile Include="..\..\Compiler\Compiler\OtherHelpersAndHandlers\Constants.cs">
       <Link>Constants.cs</Link>
     </Compile>
-    <Compile Include="..\..\Compiler\Compiler\OtherHelpersAndHandlers\PathsHelper.cs">
+    <Compile Include="..\..\Compiler\Compiler.Common\Helpers\PathsHelper.cs">
       <Link>SupportClasses\PathsHelper.cs</Link>
     </Compile>
     <Compile Include="..\..\Compiler\Compiler\OtherHelpersAndHandlers\RegistryHelpers_SharedWithOtherProjects.cs">

@@ -32,7 +32,7 @@ namespace Windows.UI.Xaml.Controls
     /// Arranges and virtualizes content on a single line that is oriented either horizontally
     /// or vertically.
     /// </summary>
-    public partial class VirtualizingStackPanel : VirtualizingPanel, IScrollInfo
+    public class VirtualizingStackPanel : VirtualizingPanel, IScrollInfo
     {
         private const double LineDelta = 14.7;
         private const double Wheelitude = 3;
@@ -68,7 +68,10 @@ namespace Windows.UI.Xaml.Controls
                 nameof(Orientation), 
                 typeof(Orientation), 
                 typeof(VirtualizingStackPanel), 
-                new PropertyMetadata(Orientation.Vertical, OrientationChanged));
+                new PropertyMetadata(Orientation.Vertical, OrientationChanged)
+                {
+                    MethodToUpdateDom2 = StackPanelHelper.OnOrientationChanged,
+                });
 
         /// <summary>
         /// Gets or sets a value that describes the horizontal or vertical orientation of
@@ -80,6 +83,10 @@ namespace Windows.UI.Xaml.Controls
             get { return (Orientation)this.GetValue(OrientationProperty); }
             set { this.SetValue(OrientationProperty, value); }
         }
+
+        internal sealed override Orientation LogicalOrientation => Orientation;
+
+        internal sealed override bool HasLogicalOrientation => true;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="VirtualizingStackPanel"/>
@@ -466,37 +473,17 @@ namespace Windows.UI.Xaml.Controls
         /// </param>
         protected override void OnItemsChanged(object sender, ItemsChangedEventArgs args)
         {
-            base.OnItemsChanged(sender, args);
-            IItemContainerGenerator generator = ItemContainerGenerator;
-            ItemsControl owner = ItemsControl.GetItemsOwner(this);
-            int index, offset, viewable;
+            base.OnItemsChanged(sender, args);            
 
             switch (args.Action)
             {
                 case NotifyCollectionChangedAction.Add:
-                    // The following logic is meant to keep the current viewable items in view
-                    // after adjusting for added items.
-                    index = generator.IndexFromGeneratorPosition(args.Position);
-                    if (Orientation == Orientation.Horizontal)
-                        offset = (int)HorizontalOffset;
-                    else
-                        offset = (int)VerticalOffset;
-
-                    if (index <= offset)
-                    {
-                        // items have been added earlier in the list than what is viewable
-                        offset += args.ItemCount;
-                    }
-
-                    if (Orientation == Orientation.Horizontal)
-                        SetHorizontalOffset(offset);
-                    else
-                        SetVerticalOffset(offset);
                     break;
                 case NotifyCollectionChangedAction.Remove:
                     // The following logic is meant to keep the current viewable items in view
                     // after adjusting for removed items.
-                    index = generator.IndexFromGeneratorPosition(args.Position);
+                    ItemsControl owner = ItemsControl.GetItemsOwner(this);
+                    int offset, viewable;
                     if (Orientation == Orientation.Horizontal)
                     {
                         offset = (int)HorizontalOffset;
@@ -506,12 +493,6 @@ namespace Windows.UI.Xaml.Controls
                     {
                         viewable = (int)ViewportHeight;
                         offset = (int)VerticalOffset;
-                    }
-
-                    if (index < offset)
-                    {
-                        // items earlier in the list than what is viewable have been removed
-                        offset = Math.Max(offset - args.ItemCount, 0);
                     }
 
                     // adjust for items removed in the current view and/or beyond the current view
@@ -933,5 +914,15 @@ namespace Windows.UI.Xaml.Controls
                 ScrollOwner.InvalidateScrollInfo();
         }
         #endregion "IScrollInfo"
+
+        public override object CreateDomElement(object parentRef, out object domElementWhereToPlaceChildren)
+        {
+            return StackPanelHelper.CreateDomElement(this, Orientation, parentRef, out domElementWhereToPlaceChildren);
+        }
+
+        public override object CreateDomChildWrapper(object parentRef, out object domElementWhereToPlaceChild, int index)
+        {
+            return StackPanelHelper.CreateDomChildWrapper(this, Orientation, parentRef, out domElementWhereToPlaceChild, index);
+        }
     }
 }

@@ -62,9 +62,12 @@
                 Value="False" />
         <Setter Property="BorderThickness"
                 Value="1" />
-        <!--<Setter Property="TabNavigation" Value="Once"/>
-    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto"/>
-    <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>-->
+        <Setter Property="TabNavigation"
+                Value="Once" />
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility"
+                Value="Auto" />
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility"
+                Value="Auto" />
         <Setter Property="BorderBrush">
             <Setter.Value>
                 <LinearGradientBrush EndPoint="0.5,1"
@@ -128,9 +131,7 @@
                                           BorderBrush="Transparent"
                                           BorderThickness="0"
                                           Background="{TemplateBinding Background}"
-                                          Padding="{TemplateBinding Padding}"
-                                          VerticalScrollBarVisibility="Auto"
-                                          HorizontalScrollBarVisibility="Auto">
+                                          Padding="{TemplateBinding Padding}">
                                 <ItemsPresenter />
                             </ScrollViewer>
                         </Border>
@@ -176,7 +177,7 @@
         <Setter Property="VerticalContentAlignment" Value="Top" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="1"/>
-        <!--<Setter Property="TabNavigation" Value="Local" />-->
+        <Setter Property="TabNavigation" Value="Local" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate>
@@ -224,9 +225,8 @@
                             </VisualStateGroup>
                         </VisualStateManager.VisualStateGroups>
                         
-                        <!--RadiusX="1" RadiusY="1"!-->
-                        <Rectangle x:Name="FillColor" Opacity="0" Fill="#FFBADDE9" IsHitTestVisible="False"/>
-                        <Rectangle x:Name="FillColor2" Opacity="0" Fill="#FFBADDE9" IsHitTestVisible="False"/>
+                        <Border x:Name="FillColor" Opacity="0" Background="#FFBADDE9" IsHitTestVisible="False" CornerRadius="1"/>
+                        <Border x:Name="FillColor2" Opacity="0" Background="#FFBADDE9" IsHitTestVisible="False" CornerRadius="1"/>
                         
                         <ContentPresenter x:Name="ContentPresenter"
                                           Content="{TemplateBinding Content}"

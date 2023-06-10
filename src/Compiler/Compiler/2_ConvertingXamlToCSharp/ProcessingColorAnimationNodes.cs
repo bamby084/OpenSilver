@@ -22,7 +22,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 
-namespace DotNetForHtml5.Compiler
+namespace OpenSilver.Compiler
 {
     internal static class ProcessingColorAnimationNodes
     {
@@ -33,12 +33,12 @@ namespace DotNetForHtml5.Compiler
         // if XXX doesn't end on ".Color" or ".Color)"
         //------------------------------------------------------------
 
-        public static void Process(XDocument doc, ReflectionOnSeparateAppDomainHandler reflectionOnSeparateAppDomain)
+        public static void Process(XDocument doc, AssembliesInspector reflectionOnSeparateAppDomain)
         {
             TraverseNextElement(doc.Root, reflectionOnSeparateAppDomain);
         }
 
-        static void TraverseNextElement(XElement currentElement, ReflectionOnSeparateAppDomainHandler reflectionOnSeparateAppDomain)
+        static void TraverseNextElement(XElement currentElement, AssembliesInspector reflectionOnSeparateAppDomain)
         {
            
             if (GeneratingCSharpCode.IsColorAnimation(currentElement))

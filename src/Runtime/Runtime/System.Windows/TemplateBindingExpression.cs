@@ -13,6 +13,7 @@
 \*====================================================================================*/
 
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using CSHTML5.Internal;
 using OpenSilver.Internal.Data;
@@ -34,14 +35,14 @@ namespace Windows.UI.Xaml
     /// </summary>
     public class TemplateBindingExpression : Expression
     {
-        private readonly Control _source;
+        private readonly IInternalControl _source;
         private readonly DependencyProperty _sourceProperty;
         private DependencyObject _target;
         private DependencyProperty _targetProperty;
-        private IPropertyChangedListener _listener;
+        private DependencyPropertyChangedListener _listener;
         private bool _skipTypeCheck;
 
-        internal TemplateBindingExpression(Control templatedParent, DependencyProperty sourceDP)
+        internal TemplateBindingExpression(IInternalControl templatedParent, DependencyProperty sourceDP)
         {
             _source = templatedParent ?? throw new ArgumentNullException(nameof(templatedParent));
             _sourceProperty = sourceDP ?? throw new ArgumentNullException(nameof(sourceDP));
@@ -55,7 +56,7 @@ namespace Windows.UI.Xaml
         internal override object GetValue(DependencyObject d, DependencyProperty dp)
         {
             var value = _source.GetValue(_sourceProperty);
-            if (_skipTypeCheck || DependencyProperty.IsValueTypeValid(value, dp.PropertyType))
+            if (_skipTypeCheck || ValidateValue(ref value, dp))
             {
                 return value;
             }
@@ -78,8 +79,7 @@ namespace Windows.UI.Xaml
             _targetProperty = dp;
 
             _skipTypeCheck = _targetProperty.PropertyType.IsAssignableFrom(_sourceProperty.PropertyType);
-            _listener = INTERNAL_PropertyStore.ListenToChanged(_source, _sourceProperty, 
-                (o, args) => _target.ApplyExpression(_targetProperty, this, false));
+            _listener = new DependencyPropertyChangedListener((DependencyObject)_source, _sourceProperty, OnPropertyChanged);
         }
 
         internal override void OnDetach(DependencyObject d, DependencyProperty dp)
@@ -92,12 +92,43 @@ namespace Windows.UI.Xaml
             _skipTypeCheck = false;
             var listener = _listener;
             _listener = null;
-            listener?.Detach();
+            listener?.Dispose();
         }
 
         internal override void SetValue(DependencyObject d, DependencyProperty dp, object value)
         {
             return;
+        }
+
+        private void OnPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs args)
+        {
+            _target.ApplyExpression(_targetProperty, this, false);
+        }
+
+        private bool ValidateValue(ref object value, DependencyProperty targetProperty)
+        {
+            if (DependencyProperty.IsValueTypeValid(value, targetProperty.PropertyType))
+            {
+                return true;
+            }
+
+            if (value != null
+                && _sourceProperty == ContentControl.ContentProperty
+                && TypeConverterHelper.IsCoreType(targetProperty.OwnerType))
+            {
+                TypeConverter converter = TypeConverterHelper.GetBuiltInConverter(targetProperty.PropertyType);
+                if (converter?.CanConvertFrom(value.GetType()) ?? false)
+                {
+                    try
+                    {
+                        value = converter.ConvertFrom(value);
+                        return true;
+                    }
+                    catch { }
+                }
+            }
+
+            return false;
         }
     }
 }

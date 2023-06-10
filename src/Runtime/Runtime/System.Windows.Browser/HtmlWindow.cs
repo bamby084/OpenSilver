@@ -12,17 +12,28 @@
 \*====================================================================================*/
 
 using System;
+using System.ComponentModel;
+using System.Windows.Browser.Internal;
+using OpenSilver.Internal;
+
 #if !MIGRATION
 using Windows.UI.Xaml;
 #endif
 
 namespace System.Windows.Browser
 {
-    public sealed partial class HtmlWindow : HtmlObject
+    public sealed class HtmlWindow : HtmlObject
     {
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        [Obsolete(Helper.ObsoleteMemberMessage + " Use System.Windows.Browser.HtmlPage.Window instead.")]
         public HtmlWindow()
+            : this(new WindowRef())
         {
+        }
 
+        internal HtmlWindow(IJSObjectRef jsObject)
+            : base(jsObject)
+        {
         }
 
         /// <summary>
@@ -37,24 +48,15 @@ namespace System.Windows.Browser
             {
                 if (target != "_search")
                 {
-#if !CSHTML5NETSTANDARD
-                    // The Simulator cannot open a URL in another window/tab:
-                    if (target == "_blank" && OpenSilver.Interop.IsRunningInTheSimulator)
-                    {
-                        DotNetForHtml5.Core.INTERNAL_Simulator.SimulatorProxy.NavigateToUrlInNewBrowserWindow(navigateToUri.ToString());
-                    }
-                    else
-                    {
-#endif
                     if (target == "")
                     {
                         target = "_self";
                     }
 
-                    OpenSilver.Interop.ExecuteJavaScriptAsync(@"window.open($0, $1, $2)", navigateToUri.ToString(), target, targetFeatures);
-#if !CSHTML5NETSTANDARD
-                    }
-#endif
+                    string sUri = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(navigateToUri.ToString());
+                    string sTarget = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(target);
+                    string sTargetFeatures = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(targetFeatures);
+                    OpenSilver.Interop.ExecuteJavaScriptFastAsync($"window.open({sUri}, {sTarget}, {sTargetFeatures})");
                 }
                 else
                 {
@@ -73,12 +75,9 @@ namespace System.Windows.Browser
         /// </summary>
         /// <param name="code">Javascript code.</param>
         /// <returns>The results of the JavaScript engine's evaluation of the string in the code parameter.</returns>
-#if BRIDGE
-        [Bridge.Script("eval(code)")]
-#endif
         public object Eval(string code)
         {
-            return OpenSilver.Interop.ExecuteJavaScript("eval($0)", code);
+            return Invoke("eval", code);
         }
 
         [OpenSilver.NotImplemented]
@@ -90,9 +89,6 @@ namespace System.Windows.Browser
         /// <param name="alertText">
         /// The text to display.
         /// </param>
-#if BRIDGE
-        [Bridge.Template("alert(alertText)")]
-#endif
         public void Alert(string alertText)
         {
             if (OpenSilver.Interop.IsRunningInTheSimulator)
@@ -101,7 +97,7 @@ namespace System.Windows.Browser
             }
             else
             {
-                OpenSilver.Interop.ExecuteJavaScript("alert($0)", alertText);
+                OpenSilver.Interop.ExecuteJavaScriptVoid($"alert({CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(alertText)})");
             }
         }
 
@@ -115,9 +111,6 @@ namespace System.Windows.Browser
         /// <returns>
         /// true if the user clicked the OK button; otherwise, false.
         /// </returns>
-#if BRIDGE
-        [Bridge.Template("confirm(confirmText)")]
-#endif
         public bool Confirm(string confirmText)
         {
             if (OpenSilver.Interop.IsRunningInTheSimulator)
@@ -126,49 +119,8 @@ namespace System.Windows.Browser
             }
             else
             {
-                return Convert.ToBoolean(OpenSilver.Interop.ExecuteJavaScript("confirm($0)", confirmText));
+                return OpenSilver.Interop.ExecuteJavaScriptBoolean($"confirm({CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(confirmText)})");
             }
-        }
-
-        /// <summary>
-        /// Gets the value of a property that is identified by name on the current <see cref="HtmlWindow" />
-        /// </summary>
-        /// <param name="name">
-        /// The name of the property.
-        /// </param>
-        /// <returns>
-        /// <see langword="null" /> if the property does not exist.
-        /// </returns>
-        /// <exception cref="ArgumentNullException">
-        /// <paramref name="name"/> is <see langword="null" />.
-        /// </exception>
-        /// <exception cref="ArgumentException">
-        /// <paramref name="name"/> is an empty string or contains an embedded null character (\0).
-        /// </exception>
-#if BRIDGE
-        [Bridge.Template("{name}")]
-#endif
-        public override object GetProperty(string name)
-        {
-            var result = default(object);
-
-            if (name is null)
-            {
-                throw new ArgumentNullException(name);
-            }
-            else if (string.IsNullOrEmpty(name) || name.Contains("\\0"))
-            {
-                throw new ArgumentException($"{nameof(name)} is an empty string or contains an embedded null character (\0)");
-            }
-
-            var jsObject = OpenSilver.Interop.ExecuteJavaScript(name);
-
-            if (!jsObject.ToString().Equals("undefined"))
-            {
-                result = jsObject;
-            }
-
-            return result;
         }
     }
 }

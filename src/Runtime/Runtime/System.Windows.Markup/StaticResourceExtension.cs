@@ -13,6 +13,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Xaml;
 using OpenSilver.Internal.Xaml;
 
 #if !MIGRATION
@@ -53,10 +55,9 @@ namespace System.Windows.Markup
         /// <returns>An object that is provided as the value of the target property for this StaticResource.</returns>
         public override object ProvideValue(IServiceProvider serviceProvider)
         {
-            ResourceDictionary dictionaryWithKey = FindTheResourceDictionary(serviceProvider);
-            if (dictionaryWithKey != null)
+            if (TryFindTheResource(serviceProvider, out object resource))
             {
-                return dictionaryWithKey[ResourceKey];
+                return resource;
             }
 
             object value = FindResourceInAppOrSystem();
@@ -67,30 +68,88 @@ namespace System.Windows.Markup
             return value;
         }
 
-        private ResourceDictionary FindTheResourceDictionary(IServiceProvider serviceProvider)
+        private bool TryFindTheResource(IServiceProvider serviceProvider, out object resource)
         {
-            IAmbientResourcesProvider ambientProvider = serviceProvider.GetService(typeof(IAmbientResourcesProvider)) as IAmbientResourcesProvider;
-            if (ambientProvider == null)
+            if (serviceProvider.GetService(typeof(IAmbientResourcesProvider)) is IAmbientResourcesProvider ambientResourcesProvider)
+            {
+                return TryFindResourceFromCompiler(ambientResourcesProvider, out resource);
+            }
+            else if (serviceProvider.GetService(typeof(IAmbientProvider)) is IAmbientProvider ambientProvider)
+            {
+                if (serviceProvider.GetService(typeof(IXamlSchemaContextProvider)) is not IXamlSchemaContextProvider schemaContextProvider)
+                {
+                    throw new InvalidOperationException(
+                        string.Format("Markup extension '{0}' requires '{1}' be implemented in the IServiceProvider for ProvideValue.",
+                            GetType().Name,
+                            nameof(IXamlSchemaContextProvider)));
+                }
+
+                return TryFindResourceFromParser(ambientProvider, schemaContextProvider, out resource);
+            }
+            else
             {
                 throw new InvalidOperationException(
-                    string.Format("Markup extension '{0}' requires '{1}' be implemented in the IServiceProvider for ProvideValue.",
+                    string.Format("Markup extension '{0}' requires '{1}' or '{2}' be implemented in the IServiceProvider for ProvideValue.",
                         GetType().Name,
-                        nameof(IAmbientResourcesProvider)));
+                        nameof(IAmbientResourcesProvider),
+                        nameof(IAmbientProvider)));
             }
+        }
+
+        private bool TryFindResourceFromCompiler(IAmbientResourcesProvider ambientProvider, out object resource)
+        {
+            Debug.Assert(ambientProvider != null);
 
             IEnumerable<object> ambientValues = ambientProvider.GetAllAmbientValues();
             foreach (object ambientValue in ambientValues)
             {
                 if (ambientValue is ResourceDictionary rd)
                 {
-                    if (rd.Contains(ResourceKey))
+                    if (rd.TryGetResource(ResourceKey, out resource))
                     {
-                        return rd;
+                        return true;
                     }
                 }
             }
 
-            return null;
+            resource = null;
+            return false;
+        }
+
+        private bool TryFindResourceFromParser(IAmbientProvider ambientProvider, IXamlSchemaContextProvider schemaContextProvider, out object resource)
+        {
+            Debug.Assert(ambientProvider != null);
+            Debug.Assert(schemaContextProvider != null);
+
+            XamlSchemaContext schemaContext = schemaContextProvider.SchemaContext;
+
+            XamlType feXType = schemaContext.GetXamlType(typeof(FrameworkElement));
+            XamlType appXType = schemaContext.GetXamlType(typeof(Application));
+
+            XamlMember feResourcesProperty = feXType.GetMember("Resources");
+            XamlMember appResourcesProperty = appXType.GetMember("Resources");
+
+            XamlType[] types = new XamlType[1] { schemaContext.GetXamlType(typeof(ResourceDictionary)) };
+
+            var ambientValues = ambientProvider.GetAllAmbientValues(null,
+                                                                    false,
+                                                                    types,
+                                                                    feResourcesProperty,
+                                                                    appResourcesProperty);
+
+            foreach (var ambientValue in ambientValues)
+            {
+                if (ambientValue.Value is ResourceDictionary rd)
+                {
+                    if (rd.TryGetResource(ResourceKey, out resource))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            resource = null;
+            return false;
         }
 
         private object FindResourceInAppOrSystem()
@@ -98,9 +157,9 @@ namespace System.Windows.Markup
             Application app = Application.Current;
             if (app != null)
             {
-                if (app.HasResources && app.Resources.Contains(ResourceKey))
+                if (app.HasResources && app.Resources.TryGetResource(ResourceKey, out object resource))
                 {
-                    return app.Resources[ResourceKey];
+                    return resource;
                 }
                 else
                 {

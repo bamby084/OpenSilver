@@ -1,5 +1,4 @@
 ﻿
-
 /*===================================================================================
 * 
 *   Copyright (c) Userware/OpenSilver.net
@@ -12,16 +11,13 @@
 *  
 \*====================================================================================*/
 
-
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Diagnostics;
+using DotNetForHtml5.Core;
+
 #if !MIGRATION
 using Windows.Foundation;
 #endif
-
 
 #if MIGRATION
 namespace System.Windows
@@ -29,17 +25,48 @@ namespace System.Windows
 namespace Windows.UI.Xaml
 #endif
 {
-    internal partial class ControlToWatch
+    internal sealed class ControlToWatch
     {
-        internal ControlToWatch(UIElement controlToWatch, Action<Point, Size> OnPositionOrSizeChangedCallback)
+        private readonly UIElement _control;
+        private readonly Action<ControlToWatch> _callback;
+        private Rect _bounds;
+
+        internal UIElement Control => _control;
+        internal Rect Bounds => _bounds;
+
+        internal ControlToWatch(UIElement control, Action<ControlToWatch> callback)
         {
-            ControltoWatch = controlToWatch;
-            OnPositionOrSizeChanged = OnPositionOrSizeChangedCallback;
+            Debug.Assert(control != null);
+            Debug.Assert(callback != null);
+
+            _control = control;
+            _callback = callback;
+
+            Initialize();
         }
 
-        internal UIElement ControltoWatch;
-        internal Size PreviousSize;
-        internal Point PreviousPosition;
-        internal Action<Point, Size> OnPositionOrSizeChanged;
+        internal void InvokeCallback()
+        {
+            Point position = INTERNAL_PopupsManager.GetUIElementAbsolutePosition(_control);
+            Size size = _control.GetBoundingClientSize();
+            Rect bounds = new(position, size);
+            if (_bounds != bounds)
+            {
+                _bounds = bounds;
+                _callback(this);
+            }
+        }
+
+        private void Initialize()
+        {
+            Point position = INTERNAL_PopupsManager.GetUIElementAbsolutePosition(_control);
+            Size size = _control switch
+            {
+                FrameworkElement fe => fe.INTERNAL_GetActualWidthAndHeight(),
+                _ => new Size(),
+            };
+
+            _bounds = new Rect(position, size);
+        }
     }
 }

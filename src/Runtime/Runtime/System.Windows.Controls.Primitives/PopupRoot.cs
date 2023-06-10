@@ -13,10 +13,15 @@
 \*====================================================================================*/
 
 using System;
+using System.Collections.Generic;
 using CSHTML5.Internal;
+using DotNetForHtml5.Core;
 
-#if !MIGRATION
+#if MIGRATION
+using System.Windows.Input;
+#else
 using Windows.Foundation;
+using Windows.UI.Xaml.Input;
 #endif
 
 #if MIGRATION
@@ -25,7 +30,7 @@ namespace System.Windows.Controls.Primitives
 namespace Windows.UI.Xaml.Controls.Primitives
 #endif
 {
-    internal partial class PopupRoot : FrameworkElement
+    internal sealed class PopupRoot : FrameworkElement
     {
         /// <summary>
         /// Returns the Visual children count.
@@ -60,33 +65,20 @@ namespace Windows.UI.Xaml.Controls.Primitives
 
         internal Popup INTERNAL_LinkedPopup { get; set; }
 
-        internal sealed override bool EnablePointerEventsCore
-            => !INTERNAL_LinkedPopup?.StayOpen ?? false;
-
-        internal PopupRoot(string uniqueIdentifier, Window parentWindow)
+        internal PopupRoot(string uniqueIdentifier, Window parentWindow, Popup popup)
         {
             INTERNAL_UniqueIndentifier = uniqueIdentifier;
             INTERNAL_ParentWindow = parentWindow;
-
-            // Make sure that after the Loaded event of the PopupRoot, the parent Popup also raises the Loaded event:
-            this.Loaded += PopupRoot_Loaded;
+            INTERNAL_LinkedPopup = popup;
         }
 
-        private void PopupRoot_Loaded(object sender, RoutedEventArgs e)
+        internal void SetLayoutSize()
         {
-            // Make sure that the Loaded event of the Popup is raised (this is useful if the <Popup> control is never added to the visual tree, such as for tooltips).
-            if (this.INTERNAL_LinkedPopup != null
-                && !this.INTERNAL_LinkedPopup.IsConnectedToLiveTree) // We check that the <Popup> has no visual parent. In fact, if it had a visual parent, it means that it is in the visual tree (for example if the <Popup> was declared in XAML), and therefore the Loaded event has already been called once.
-            {
-                this.INTERNAL_LinkedPopup.RaiseLoadedEvent();
-                this.INTERNAL_LinkedPopup.InvalidateMeasure();
-            }
-            if (INTERNAL_ParentWindow != null && this.IsCustomLayoutRoot)
-            {
-                Rect windowBounds = INTERNAL_ParentWindow.Bounds;
-                this.Measure(new Size(windowBounds.Width, windowBounds.Height));
-                this.Arrange(windowBounds);
-            }
+            if (!UseCustomLayout) return;
+
+            InvalidateMeasure();
+            Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            Arrange(new Rect(new Point(), DesiredSize));
         }
 
         /// <summary>
@@ -97,46 +89,147 @@ namespace Windows.UI.Xaml.Controls.Primitives
             get { return (UIElement)GetValue(ContentProperty); }
             set { SetValue(ContentProperty, value); }
         }
+
         /// <summary>
         /// Identifies the PopupRoot.Content dependency property.
         /// </summary>
         public static readonly DependencyProperty ContentProperty =
-            DependencyProperty.Register("Content", typeof(UIElement), typeof(PopupRoot), new PropertyMetadata(null, Content_Changed)
-            { CallPropertyChangedWhenLoadedIntoVisualTree = WhenToCallPropertyChangedEnum.IfPropertyIsSet });
+            DependencyProperty.Register(
+                nameof(Content),
+                typeof(UIElement),
+                typeof(PopupRoot),
+                new PropertyMetadata(null, OnContentChanged));
 
-
-        static void Content_Changed(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        private static void OnContentChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            UIElement parent = (UIElement)d;
-            UIElement oldChild = (UIElement)e.OldValue;
-            UIElement newChild = (UIElement)e.NewValue;
+            PopupRoot popupRoot = (PopupRoot)d;
+            popupRoot.TemplateChild = null;
+            if (INTERNAL_VisualTreeManager.IsElementInVisualTree(popupRoot))
+            {
+                popupRoot.InvalidateMeasureInternal();
+            }
+        }
 
-            INTERNAL_VisualTreeManager.DetachVisualChildIfNotNull(oldChild, parent);
-            parent.RemoveVisualChild(oldChild);
-            parent.AddVisualChild(newChild);
-            INTERNAL_VisualTreeManager.AttachVisualChildIfNotAlreadyAttached(newChild, parent);
+#if MIGRATION
+        protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+#else
+        protected override void OnPointerPressed(PointerRoutedEventArgs e)
+#endif
+        {
+#if MIGRATION
+            base.OnMouseLeftButtonDown(e);
+#else
+            base.OnPointerPressed(e);
+#endif
+
+            // Note: If a popup has StayOpen=True, the value of "StayOpen" of its parents is ignored.
+            // In other words, the parents of a popup that has StayOpen=True will always stay open
+            // regardless of the value of their "StayOpen" property.
+
+            HashSet<Popup> listOfPopupThatMustBeClosed = new HashSet<Popup>();
+            List<PopupRoot> popupRootList = new List<PopupRoot>();
+
+            foreach (object obj in INTERNAL_PopupsManager.GetAllRootUIElements())
+            {
+                if (obj is PopupRoot)
+                {
+                    PopupRoot root = (PopupRoot)obj;
+                    popupRootList.Add(root);
+
+                    if (root.INTERNAL_LinkedPopup != null)
+                        listOfPopupThatMustBeClosed.Add(root.INTERNAL_LinkedPopup);
+                }
+            }
+
+            // We determine which popup needs to stay open after this click
+            foreach (PopupRoot popupRoot in popupRootList)
+            {
+                if (popupRoot.INTERNAL_LinkedPopup != null)
+                {
+                    // We must prevent all the parents of a popup to be closed when:
+                    // - this popup is set to StayOpen
+                    // - or the click happend in this popup
+
+                    Popup popup = popupRoot.INTERNAL_LinkedPopup;
+
+                    if (popup.StayOpen)
+                    {
+                        do
+                        {
+                            if (!listOfPopupThatMustBeClosed.Contains(popup))
+                                break;
+
+                            listOfPopupThatMustBeClosed.Remove(popup);
+
+                            popup = popup.ParentPopup;
+
+                        } while (popup != null);
+                    }
+                }
+            }
+
+            foreach (Popup popup in listOfPopupThatMustBeClosed)
+            {
+                var args = new OutsideClickEventArgs();
+                popup.OnOutsideClick(args);
+                if (!args.Handled)
+                {
+                    popup.CloseFromAnOutsideClick();
+                }
+            }
         }
 
         protected override Size MeasureOverride(Size availableSize)
         {
-            if (this.Content == null || this.INTERNAL_ParentWindow == null)
-                return availableSize;
-
-            Rect windowBounds = INTERNAL_ParentWindow.Bounds;
-            availableSize = new Size(windowBounds.Width, windowBounds.Height);
-            this.Content.Measure(availableSize);
+            int count = VisualChildrenCount;
+            if (count > 0 && INTERNAL_ParentWindow != null)
+            {
+                UIElement child = GetVisualChild(0);
+                if (child != null)
+                {
+                    child.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                    return child.DesiredSize;
+                }
+            }
             return availableSize;
         }
 
         protected override Size ArrangeOverride(Size finalSize)
         {
-            if (this.Content == null)
-                return finalSize;
-
-            Rect windowBounds = INTERNAL_ParentWindow.Bounds;
-            finalSize = new Size(windowBounds.Width, windowBounds.Height);
-            this.Content.Arrange(new Rect(finalSize));
+            int count = VisualChildrenCount;
+            if (count > 0 && INTERNAL_ParentWindow != null)
+            {
+                UIElement child = GetVisualChild(0);
+                if (child != null)
+                {
+                    child.Arrange(new Rect(finalSize));
+                }
+            }
             return finalSize;
+        }
+
+        internal override FrameworkTemplate TemplateCache
+        {
+            get => DefaultTemplate;
+            set { }
+        }
+
+        internal override FrameworkTemplate TemplateInternal => DefaultTemplate;
+
+        private static UseContentTemplate DefaultTemplate { get; } = new UseContentTemplate();
+
+        private sealed class UseContentTemplate : FrameworkTemplate
+        {
+            public UseContentTemplate()
+            {
+                Seal();
+            }
+
+            internal override bool BuildVisualTree(IInternalFrameworkElement container)
+            {
+                container.TemplateChild = ((PopupRoot)container).Content as FrameworkElement;
+                return false;
+            }
         }
     }
 }

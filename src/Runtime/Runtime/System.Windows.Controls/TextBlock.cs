@@ -1,5 +1,4 @@
 ﻿
-
 /*===================================================================================
 * 
 *   Copyright (c) Userware/OpenSilver.net
@@ -12,21 +11,20 @@
 *  
 \*====================================================================================*/
 
-
-using CSHTML5.Internal;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Windows.Markup;
-using OpenSilver.Internal;
+using System.Diagnostics;
+using CSHTML5.Internal;
 
 #if MIGRATION
 using System.Windows.Automation.Peers;
 using System.Windows.Documents;
+using System.Windows.Input;
 #else
 using Windows.Foundation;
 using Windows.UI.Xaml.Automation.Peers;
 using Windows.UI.Xaml.Documents;
+using Windows.UI.Xaml.Input;
 #endif
 
 #if MIGRATION
@@ -79,14 +77,14 @@ namespace Windows.UI.Xaml.Controls
 
         public override object CreateDomElement(object parentRef, out object domElementWhereToPlaceChildren)
         {
-            var div = INTERNAL_HtmlDomManager.CreateTextBlockDomElementAndAppendIt(parentRef, this, TextWrapping == TextWrapping.NoWrap ? "pre" : "pre-wrap");
+            var div = INTERNAL_HtmlDomManager.CreateTextBlockDomElementAndAppendIt(parentRef, this, TextWrapping == TextWrapping.Wrap);
             domElementWhereToPlaceChildren = div;
             return div;
         }
 
-        internal sealed override NativeEventsManager CreateEventsManager()
+        internal sealed override void AddEventListeners()
         {
-            return new NativeEventsManager(this, this, this, false);
+            InputManager.Current.AddEventListeners(this, false);
         }
 
         internal override string GetPlainText() => Text;
@@ -111,7 +109,7 @@ namespace Windows.UI.Xaml.Controls
         /// <summary>
         /// Identifies the Text dependency property.
         /// </summary>
-        public static readonly DependencyProperty TextProperty = 
+        public static readonly DependencyProperty TextProperty =
             DependencyProperty.Register(
                 "Text",
                 typeof(string),
@@ -163,11 +161,11 @@ namespace Windows.UI.Xaml.Controls
         /// </summary>
         public static readonly DependencyProperty TextAlignmentProperty =
             DependencyProperty.Register(
-                "TextAlignment", 
-                typeof(TextAlignment), 
-                typeof(TextBlock), 
-                new PropertyMetadata(TextAlignment.Left) 
-                { 
+                "TextAlignment",
+                typeof(TextAlignment),
+                typeof(TextBlock),
+                new PropertyMetadata(TextAlignment.Left)
+                {
                     MethodToUpdateDom = TextAlignment_MethodToUpdateDom
                 });
 
@@ -206,30 +204,34 @@ namespace Windows.UI.Xaml.Controls
         /// Identifies the TextWrapping dependency property.
         /// </summary>
         public static readonly DependencyProperty TextWrappingProperty =
-            DependencyProperty.Register("TextWrapping", typeof(TextWrapping), typeof(TextBlock),
+            DependencyProperty.Register(
+                nameof(TextWrapping),
+                typeof(TextWrapping),
+                typeof(TextBlock),
                 new FrameworkPropertyMetadata(TextWrapping.NoWrap, FrameworkPropertyMetadataOptions.AffectsMeasure)
-            {
-                GetCSSEquivalent = (instance) =>
                 {
-                    return new CSSEquivalent()
-                    {
-                        Value = (inst, value) =>
-                            {
-                                TextWrapping newTextWrapping = (TextWrapping)value;
-                                switch (newTextWrapping)
-                                {
-                                    case TextWrapping.Wrap:
-                                        return "pre-wrap"; //wrap + preserve whitespaces
-                                    case TextWrapping.NoWrap:
-                                    default:
-                                        return "pre"; //nowrap + preserve whitespaces
-                                }
-                            },
-                        Name = new List<string> { "whiteSpace" },
-                    };
-                }
+                    MethodToUpdateDom2 = static (d, oldValue, newValue) => ApplyTextWrapping(
+                        INTERNAL_HtmlDomManager.GetDomElementStyleForModification(((TextBlock)d).INTERNAL_OuterDomElement),
+                        (TextWrapping)newValue),
+                });
+
+        internal static void ApplyTextWrapping(INTERNAL_HtmlDomStyleReference cssStyle, TextWrapping textWrapping)
+        {
+            Debug.Assert(cssStyle != null);
+            switch (textWrapping)
+            {
+                case TextWrapping.Wrap:
+                    cssStyle.whiteSpace = "pre-wrap";
+                    cssStyle.overflowWrap = "break-word";
+                    break;
+
+                case TextWrapping.NoWrap:
+                default:
+                    cssStyle.whiteSpace = "pre";
+                    cssStyle.overflowWrap = string.Empty;
+                    break;
             }
-            );
+        }
 
         #endregion
 
@@ -245,14 +247,7 @@ namespace Windows.UI.Xaml.Controls
             }
         }
 
-        internal override void UpdateTabIndex(bool isTabStop, int tabIndex)
-        {
-            // we don't do anything since TextBlock is not supposed to be a Control in the first place
-            // and it is not supposed to be counted in tabbing
-            return;
-        }
-
-        public static readonly DependencyProperty TextTrimmingProperty = 
+        public static readonly DependencyProperty TextTrimmingProperty =
             DependencyProperty.Register(
                 "TextTrimming",
                 typeof(TextTrimming),
@@ -316,11 +311,11 @@ namespace Windows.UI.Xaml.Controls
                 MethodToUpdateDom = (instance, value) =>
                 {
                     double valueAsDouble = (double)value;
-                    if(valueAsDouble < 0)
+                    if (valueAsDouble < 0)
                     {
                         throw new ArgumentException("TextBlock.LineHeight is set to a non-positive value.");
                     }
-                    if(valueAsDouble > 0)
+                    if (valueAsDouble > 0)
                     {
                         ((TextBlock)instance).UpdateCSSLineHeight(value.ToString() + "px");
                     }
@@ -340,38 +335,39 @@ namespace Windows.UI.Xaml.Controls
             }
         }
 
-		private Size noWrapSize = Size.Empty;
+        private Size noWrapSize = Size.Empty;
 
-		internal override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
-		{
-			// Skip when loading or changed on TextMeasurement Div.
-			if (this.INTERNAL_OuterDomElement == null || Application.Current.TextMeasurementService.IsTextMeasureDivID(((INTERNAL_HtmlDomElementReference)this.INTERNAL_OuterDomElement).UniqueIdentifier))
-				return;
+        internal override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+        {
+            // Skip when loading or changed on TextMeasurement Div.
+            if (this.INTERNAL_OuterDomElement == null || Application.Current.TextMeasurementService.IsTextMeasureDivID(((INTERNAL_HtmlDomElementReference)this.INTERNAL_OuterDomElement).UniqueIdentifier))
+                return;
 
-			FrameworkPropertyMetadata metadata = e.Property.GetMetadata(GetType()) as FrameworkPropertyMetadata;
+            FrameworkPropertyMetadata metadata = e.Property.GetMetadata(GetType()) as FrameworkPropertyMetadata;
 
-			if (metadata != null)
-			{
-				if (metadata.AffectsMeasure)
-				{
-					noWrapSize = Size.Empty;
-				}
-			}
-			base.OnPropertyChanged(e);
-		}
+            if (metadata != null)
+            {
+                if (metadata.AffectsMeasure)
+                {
+                    noWrapSize = Size.Empty;
+                }
+            }
+            base.OnPropertyChanged(e);
+        }
 
-		protected override Size MeasureOverride(Size availableSize)
-		{
-            //Size actualSize = this.INTERNAL_GetActualWidthAndHeight();
-            //return actualSize;
-            Size BorderThicknessSize = new Size(BorderThickness.Left + BorderThickness.Right, BorderThickness.Top + BorderThickness.Bottom);
-
+        protected override Size MeasureOverride(Size availableSize)
+        {
             string uniqueIdentifier = ((INTERNAL_HtmlDomElementReference)this.INTERNAL_OuterDomElement).UniqueIdentifier;
 
             if (noWrapSize == Size.Empty)
             {
-                noWrapSize = Application.Current.TextMeasurementService.MeasureTextBlock(uniqueIdentifier, TextWrapping.NoWrap, Padding, Double.PositiveInfinity);
-                noWrapSize = noWrapSize.Add(BorderThicknessSize);
+                noWrapSize = Application.Current.TextMeasurementService.MeasureTextBlock(
+                    uniqueIdentifier,
+                    "pre",
+                    string.Empty,
+                    Padding,
+                    double.PositiveInfinity,
+                    string.Empty);
             }
 
             if (TextWrapping == TextWrapping.NoWrap || noWrapSize.Width <= availableSize.Width)
@@ -380,19 +376,24 @@ namespace Windows.UI.Xaml.Controls
                 return noWrapSize;
             }
 
-            Size TextSize = Application.Current.TextMeasurementService.MeasureTextBlock(uniqueIdentifier, TextWrapping, Padding, (availableSize.Width - BorderThicknessSize.Width).Max(0));
-            TextSize = TextSize.Add(BorderThicknessSize);
+            Size TextSize = Application.Current.TextMeasurementService.MeasureTextBlock(
+                uniqueIdentifier,
+                TextWrapping == TextWrapping.NoWrap ? "pre" : "pre-wrap",
+                TextWrapping == TextWrapping.NoWrap ? string.Empty : "break-word",
+                Padding,
+                availableSize.Width,
+                string.Empty);
 
             _measuredSize = TextSize;
             return TextSize;
         }
 
-		protected override Size ArrangeOverride(Size finalSize)
-		{
+        protected override Size ArrangeOverride(Size finalSize)
+        {
             double w = Math.Max(_measuredSize.Width, finalSize.Width);
             double h = Math.Max(_measuredSize.Height, finalSize.Height);
 
             return new Size(w, h);
-		}
+        }
     }
 }

@@ -57,7 +57,7 @@ namespace OpenSilver.Internal
             => Interop.IsRunningInTheSimulator && INTERNAL_Simulator.ClipboardHandler != null;
 
         private static bool IsNavigatorClipboardAvailable()
-            => Convert.ToBoolean(Interop.ExecuteJavaScript("!!navigator.clipboard"));
+            => Interop.ExecuteJavaScriptBoolean("!!navigator.clipboard", false);
 
         private class WPFClipboard : IAsyncClipboard
         {
@@ -90,7 +90,7 @@ namespace OpenSilver.Internal
             {
                 var tcs = new TaskCompletionSource<object>();
 
-                Interop.ExecuteJavaScript("navigator.clipboard.writeText($0).then($1());",
+                Interop.ExecuteJavaScriptVoid("navigator.clipboard.writeText($0).then($1());",flushQueue:false, 
                     text,
                     new Action(() =>
                     {
@@ -114,7 +114,7 @@ namespace OpenSilver.Internal
             {
                 var tcs = new TaskCompletionSource<string>();
 
-                Interop.ExecuteJavaScript("navigator.clipboard.readText().then(text => $0(text));",
+                Interop.ExecuteJavaScriptVoid("navigator.clipboard.readText().then(text => $0(text));",flushQueue:false, 
                     new Action<string>(content =>
                     {
                         try
@@ -137,7 +137,7 @@ namespace OpenSilver.Internal
             {
                 var tcs = new TaskCompletionSource<bool>();
 
-                Interop.ExecuteJavaScript("navigator.clipboard.readText().then(text => $0(!!text))",
+                Interop.ExecuteJavaScriptVoid("navigator.clipboard.readText().then(text => $0(!!text))",flushQueue:false, 
                     new Action<bool>(b =>
                     {
                         try
@@ -158,7 +158,7 @@ namespace OpenSilver.Internal
         {
             static ExecCommandClipboard()
             {
-                Interop.ExecuteJavaScript(@"_opensilver.clipboard = {
+                Interop.ExecuteJavaScriptVoid(@"_opensilver.clipboard = {
     writeText : function (data) {
         const input = document.createElement('input');
         document.body.appendChild(input);
@@ -180,7 +180,10 @@ namespace OpenSilver.Internal
             }
 
             public void SetText(string text)
-                => Interop.ExecuteJavaScript("_opensilver.clipboard.writeText($0)", text);
+            {
+                string escapedText = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(text);
+                Interop.ExecuteJavaScriptVoid($"_opensilver.clipboard.writeText({escapedText})");
+            }
 
             public Task SetTextAsync(string text)
             {
@@ -189,12 +192,12 @@ namespace OpenSilver.Internal
             }
 
             public string GetText()
-                => Convert.ToString(Interop.ExecuteJavaScript("_opensilver.clipboard.readText()"));
+                => Interop.ExecuteJavaScriptString("_opensilver.clipboard.readText()");
 
             public Task<string> GetTextAsync() => Task.FromResult(GetText());
 
             public bool ContainsText()
-                => Convert.ToBoolean(Interop.ExecuteJavaScript("!!_opensilver.clipboard.readText()"));
+                => Interop.ExecuteJavaScriptBoolean("!!_opensilver.clipboard.readText()");
 
             public Task<bool> ContainsTextAsync() => Task.FromResult(ContainsText());
         }

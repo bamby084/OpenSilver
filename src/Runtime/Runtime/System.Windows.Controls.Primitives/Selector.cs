@@ -19,6 +19,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
+using OpenSilver.Internal;
 
 #if MIGRATION
 using System.Windows.Media;
@@ -403,6 +404,40 @@ namespace Windows.UI.Xaml.Controls.Primitives
         private bool IsSynchronizedWithCurrentItemPrivate { get; set; }
 
         /// <summary>
+        /// Builds the visual tree for the <see cref="Selector"/> control
+        /// when a new template is applied.
+        /// </summary>
+#if MIGRATION
+        public override void OnApplyTemplate()
+#else
+        protected override void OnApplyTemplate()
+#endif
+        {
+            base.OnApplyTemplate();
+            ConnectToScrollHost();
+        }
+
+        private void ConnectToScrollHost()
+        {
+            if (HandlesScrolling)
+            {
+                ScrollViewer scrollHost = ScrollHost;
+                if (scrollHost != null)
+                {
+                    scrollHost.IsTabStop = false;
+                    if (scrollHost.ReadLocalValue(ScrollViewer.HorizontalScrollBarVisibilityProperty) == DependencyProperty.UnsetValue)
+                    {
+                        scrollHost.HorizontalScrollBarVisibility = ScrollViewer.GetHorizontalScrollBarVisibility(this);
+                    }
+                    if (scrollHost.ReadLocalValue(ScrollViewer.VerticalScrollBarVisibilityProperty) == DependencyProperty.UnsetValue)
+                    {
+                        scrollHost.VerticalScrollBarVisibility = ScrollViewer.GetVerticalScrollBarVisibility(this);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// Gets whether the <see cref="Selector"/> contains items.
         /// </summary>
         protected new bool HasItems
@@ -429,6 +464,15 @@ namespace Windows.UI.Xaml.Controls.Primitives
             SetSynchronizationWithCurrentItem();
         }
 
+        /// <summary>
+        /// Prepares the specified element to display the specified item.
+        /// </summary>
+        /// <param name="element">
+        /// The element used to display the specified item.
+        /// </param>
+        /// <param name="item">
+        /// The item to display
+        /// </param>
         protected override void PrepareContainerForItemOverride(DependencyObject element, object item)
         {
             base.PrepareContainerForItemOverride(element, item);
@@ -440,6 +484,16 @@ namespace Windows.UI.Xaml.Controls.Primitives
             }
         }
 
+        /// <summary>
+        /// Removes any bindings and templates applied to the item container for the specified
+        /// content.
+        /// </summary>
+        /// <param name="element">
+        /// The combo box item used to display the specified content.
+        /// </param>
+        /// <param name="item">
+        /// The item content.
+        /// </param>
         protected override void ClearContainerForItemOverride(DependencyObject element, object item)
         {
             base.ClearContainerForItemOverride(element, item);
@@ -447,6 +501,7 @@ namespace Windows.UI.Xaml.Controls.Primitives
             if (element is SelectorItem container)
             {
                 container.ParentSelector = null;
+                container.ClearContentControl(item);
             }
         }
 
@@ -559,24 +614,6 @@ namespace Windows.UI.Xaml.Controls.Primitives
             base.AdjustItemInfoOverride(e);
         }
 
-        internal override bool FocusItem(ItemInfo info)
-        {
-            if (info.Index == -1)
-            {
-                return false;
-            }
-
-            bool returnValue = false;
-
-            ScrollIntoViewImpl(info.Index);
-            if (info.Container is ListBoxItem container)
-            {
-                returnValue = container.Focus();
-            }
-
-            return returnValue;
-        }
-
         /// <summary>
         /// Raises the SelectionChanged event
         /// </summary>
@@ -588,6 +625,8 @@ namespace Windows.UI.Xaml.Controls.Primitives
                 this.SelectionChanged(this, e);
             }
         }
+
+        internal virtual ScrollViewer ScrollHost { get; }
 
         internal SelectionChanger SelectionChange { get; }
 
@@ -778,7 +817,7 @@ namespace Windows.UI.Xaml.Controls.Primitives
         {
             int selectedIndex = SelectedIndex;
             if ((selectedIndex > Items.Count - 1)
-                || (selectedIndex == -1 && _selectedItems.Count > 0)
+                || (selectedIndex <= -1 && _selectedItems.Count > 0)
                 || (selectedIndex > -1
                     && (_selectedItems.Count == 0 || selectedIndex != _selectedItems[0].Index)))
             {
@@ -1360,7 +1399,7 @@ namespace Windows.UI.Xaml.Controls.Primitives
         /// <summary>
         /// Gets or sets the bakground color of the selected Items.
         /// </summary>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public Brush SelectedItemBackground
         {
             get { return (Brush)this.GetValue(Selector.SelectedItemBackgroundProperty); }
@@ -1370,18 +1409,18 @@ namespace Windows.UI.Xaml.Controls.Primitives
         /// <summary>
         /// Identifies the SelectedItemBackground dependency property
         /// </summary>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public static readonly DependencyProperty SelectedItemBackgroundProperty =
             DependencyProperty.Register(
                 "SelectedItemBackground",
                 typeof(Brush),
                 typeof(Selector),
-                new PropertyMetadata(new SolidColorBrush((Color)Color.INTERNAL_ConvertFromString("#FFBADDE9"))));
+                new PropertyMetadata(new SolidColorBrush(Color.INTERNAL_ConvertFromString("#FFBADDE9"))));
 
         /// <summary>
         /// Gets or sets the foreground color of the selected Items.
         /// </summary>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public Brush SelectedItemForeground
         {
             get { return (Brush)this.GetValue(Selector.SelectedItemForegroundProperty); }
@@ -1391,7 +1430,7 @@ namespace Windows.UI.Xaml.Controls.Primitives
         /// <summary>
         /// Identifies the SelectedItemForeground dependency property
         /// </summary>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public static readonly DependencyProperty SelectedItemForegroundProperty =
             DependencyProperty.Register(
                 "SelectedItemForeground",
@@ -1402,7 +1441,7 @@ namespace Windows.UI.Xaml.Controls.Primitives
         /// <summary>
         /// Gets or sets the bakground color of the Items that are not selected.
         /// </summary>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public Brush RowBackground
         {
             get { return (Brush)this.GetValue(Selector.RowBackgroundProperty); }
@@ -1412,7 +1451,7 @@ namespace Windows.UI.Xaml.Controls.Primitives
         /// <summary>
         /// Identifies the RowBackground dependency property
         /// </summary>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public static readonly DependencyProperty RowBackgroundProperty =
             DependencyProperty.Register(
                 "RowBackground",
@@ -1424,7 +1463,7 @@ namespace Windows.UI.Xaml.Controls.Primitives
         /// <summary>
         /// Gets or sets the foreground color of the Items that are not selected.
         /// </summary>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public Brush UnselectedItemForeground
         {
             get { return (Brush)this.GetValue(Selector.UnselectedItemForegroundProperty); }
@@ -1434,7 +1473,7 @@ namespace Windows.UI.Xaml.Controls.Primitives
         /// <summary>
         /// Identifies the UnselectedItemForeground dependency property
         /// </summary>
-        [Obsolete]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public static readonly DependencyProperty UnselectedItemForegroundProperty =
             DependencyProperty.Register(
                 "UnselectedItemForeground",
@@ -1445,14 +1484,14 @@ namespace Windows.UI.Xaml.Controls.Primitives
         /// <summary>
         /// Gets or sets the bakground color of the Items that are not selected.
         /// </summary>
-        [Obsolete("Use RowBackground instead.")]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public Brush UnselectedItemBackground
         {
             get { return this.RowBackground; }
             set { this.RowBackground = value; }
         }
 
-        [Obsolete("Unused.")]
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         protected bool ChangingSelectionProgrammatically { get; set; }
 
         #endregion Obsolete

@@ -97,21 +97,6 @@ namespace Windows.UI.Xaml.Media.Animation
             return (PropertyPath)element.GetValue(TargetPropertyProperty);
         }
 
-        ///// <summary>
-        ///// Sets the value of the Storyboard.TargetProperty XAML attached property for
-        ///// a target element.
-        ///// </summary>
-        ///// <param name="element">The target element for which to set the value.</param>
-        ///// <param name="path">
-        ///// The Storyboard.TargetProperty value of the target element to set. This specifies
-        ///// a qualification path that is used by an internal type conversion in order
-        ///// to target the dependency property where the animation applies. See Remarks.
-        ///// </param>
-        //public static void SetTargetProperty(Timeline element, string value)
-        //{
-        //    element.SetValue(TargetPropertyProperty, value);
-        //}
-
         /// <summary>
         /// Sets the value of the Storyboard.TargetProperty XAML attached property for
         /// a target element.
@@ -128,8 +113,6 @@ namespace Windows.UI.Xaml.Media.Animation
         /// </summary>
         public static readonly DependencyProperty TargetPropertyProperty =
             DependencyProperty.RegisterAttached("TargetProperty", typeof(PropertyPath), typeof(Storyboard), new PropertyMetadata(null));
-
-
 
         internal Dictionary<Tuple<string, string>, Timeline> GetPropertiesChanged()
         {
@@ -152,7 +135,10 @@ namespace Windows.UI.Xaml.Media.Animation
                     }
                     else
                     {
-                        Tuple<string, string> key = new Tuple<string, string>(Storyboard.GetTargetName(timeLine), Storyboard.GetTargetProperty(timeLine).Path);
+                        PropertyPath targetProperty = Storyboard.GetTargetProperty(timeLine);
+                        string targetName = Storyboard.GetTargetName(timeLine);
+
+                        Tuple<string, string> key = new Tuple<string, string>(targetName, targetProperty?.Path);
                         if (!INTERNAL_propertiesChanged.ContainsKey(key))
                         {
                             INTERNAL_propertiesChanged.Add(key, timeLine); //todo: the key is no longer sufficient because since we have BeginTime in Timeline, we can have multiple animations on a same property, that happen one after the other.
@@ -212,7 +198,6 @@ namespace Windows.UI.Xaml.Media.Animation
             NotifyStoryboardOfTimelineEnd((Timeline)sender);
         }
 
-        private int _expectedAmountOfTimelineEnds = 0;
         private Dictionary<Guid, int> _expectedAmountOfTimelineEndsDict = new Dictionary<Guid, int>();
         object thisLock = new object();
         internal void NotifyStoryboardOfTimelineEnd(Timeline timeline)
@@ -226,7 +211,6 @@ namespace Windows.UI.Xaml.Media.Animation
                     if (_expectedAmountOfTimelineEndsDict.ContainsKey(guid))
                     {
                         int expectedAmount = _expectedAmountOfTimelineEndsDict[guid];
-                        --_expectedAmountOfTimelineEnds;
                         --expectedAmount;
                         _expectedAmountOfTimelineEndsDict[guid] = expectedAmount;
                         if (expectedAmount <= 0)
@@ -243,42 +227,12 @@ namespace Windows.UI.Xaml.Media.Animation
 
                         if (_guidToIterationParametersDict.Count == 0)
                         {
-                             OnIterationCompleted(this._parameters);
+                            OnIterationCompleted(this._parameters);
                         }
                     }
                 }
             }
         }
-
-        ///// <summary>
-        ///// Gets the clock state of the Storyboard.
-        ///// </summary>
-        ///// <returns>One of the enumeration values. Can be: Active, Filling, or Stopped.</returns>
-        //public ClockState GetCurrentState();
-
-        ///// <summary>
-        ///// Gets the current animation clock time of the Storyboard.
-        ///// </summary>
-        ///// <returns>
-        ///// The current animation time of the Storyboard per the running animation clock,
-        ///// or null if the animation clock is Stopped.
-        ///// </returns>
-        //public TimeSpan GetCurrentTime();
-
-
-
-
-
-        ///// <summary>
-        ///// Pauses the animation clock associated with the storyboard.
-        ///// </summary>
-        //public void Pause();
-
-        ///// <summary>
-        ///// Resumes the animation clock, or run-time state, associated with the storyboard.
-        ///// </summary>
-        //public void Resume();
-        //public void Seek(TimeSpan offset);
 
         /// <summary>
         /// Moves the storyboard to the specified animation position immediately(synchronously).
@@ -319,39 +273,6 @@ namespace Windows.UI.Xaml.Media.Animation
         /// </summary>
         public static readonly DependencyProperty TargetProperty =
             DependencyProperty.RegisterAttached("Target", typeof(DependencyObject), typeof(Storyboard), new PropertyMetadata(null));
-
-
-        //public FrameworkElement Target
-        //{
-        //    get { return (FrameworkElement)GetValue(TargetProperty); }
-        //    set { SetValue(TargetProperty, value); }
-        //}
-
-        //// Using a DependencyProperty as the backing store for Target.  This enables animation, styling, binding, etc...
-        //public static readonly DependencyProperty TargetProperty =
-        //    DependencyProperty.Register("Target", typeof(FrameworkElement), typeof(Storyboard), new PropertyMetadata(null));
-
-
-
-        ///// <summary>
-        ///// Causes the specified Timeline to target the specified object.
-        ///// </summary>
-        ///// <param name="timeline">The timeline that targets the specified dependency object.</param>
-        ///// <param name="target">The actual instance of the object to target.</param>
-        //public static void SetTarget(Timeline timeline, DependencyObject target)
-        //{
-        //    timeline.SetValue(TargetProperty, target);
-        //}
-
-
-
-
-
-        ///// <summary>
-        ///// Advances the current time of the storyboard's clock to the end of its active
-        ///// period.
-        ///// </summary>
-        //public void SkipToFill();
 
         /// <summary>
         /// Stops the storyboard.
@@ -479,7 +400,7 @@ namespace Windows.UI.Xaml.Media.Animation
             }
         }
 
-        private static DependencyObject ResolveTargetName(string targetName, FrameworkElement fe, INameResolver nameResolver)
+        private static DependencyObject ResolveTargetName(string targetName, IInternalFrameworkElement fe, INameResolver nameResolver)
         {
             object namedObject;
             DependencyObject targetObject;
@@ -525,7 +446,6 @@ namespace Windows.UI.Xaml.Media.Animation
 
             GetPropertiesChanged(); //we make sure INTERNAL_propertiesChanged is filled.
 
-            _expectedAmountOfTimelineEnds = Children.Count;
             if (!_expectedAmountOfTimelineEndsDict.ContainsKey(parameters.Guid))
             {
                 _expectedAmountOfTimelineEndsDict.Add(parameters.Guid, Children.Count);
@@ -536,8 +456,8 @@ namespace Windows.UI.Xaml.Media.Animation
                 //I'm not sure this is useful but we never know.
                 _expectedAmountOfTimelineEndsDict[parameters.Guid] = Children.Count;
                 _guidToIterationParametersDict[parameters.Guid] = parameters;
-            }            
-            
+            }
+
             foreach (Timeline timeLine in Children)
             {
                 timeLine.Completed -= timeLine_Completed;
@@ -584,7 +504,7 @@ namespace Windows.UI.Xaml.Media.Animation
     /// <summary>
     /// this class has been added to make passing the parameters through the iterations easier.
     /// </summary>
-    internal partial class IterationParameters
+    internal sealed class IterationParameters
     {
         public IterationParameters(IReadOnlyDictionary<Timeline, Tuple<DependencyObject, PropertyPath>> mappings)
         {

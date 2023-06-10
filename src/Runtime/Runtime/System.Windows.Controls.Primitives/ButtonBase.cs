@@ -51,18 +51,11 @@ namespace Windows.UI.Xaml.Controls.Primitives
         public ButtonBase()
         {
             _canExecuteChangedHandler = new EventHandler(OnCanExecuteChanged);
-            UseSystemFocusVisuals = true;
 
             _timerToReleaseCaptureAutomaticallyIfNoMouseUpEvent.Interval = new TimeSpan(0, 0, 5); // See comment where this variable is defined.
             _timerToReleaseCaptureAutomaticallyIfNoMouseUpEvent.Tick += TimerToReleaseCaptureAutomaticallyIfNoMouseUpEvent_Tick;
-            IsEnabledChanged += OnIsEnabledChanged;
-#if MIGRATION
-            base.MouseLeftButtonDown += (s, e) => { }; // cf. note below
-            base.MouseLeftButtonUp += (s, e) => { }; // cf. note below
-#else
-            base.PointerPressed += (s, e) => { }; // Note: even though the logic for PointerPressed is located in the overridden method "OnPointerPressed" (below), we still need to register this event so that the underlying UIElement can listen to the HTML DOM "mousedown" event (cf. see the "Add" accessor of the "PointerPressed" event definition).
-            base.PointerReleased += (s, e) => { }; // Note: even though the logic for PointerReleased is located in the overridden method "OnPointerPressed" (below), we still need to register this event so that the underlying UIElement can listen to the HTML DOM "mouseup" event (cf. see the "Add" accessor of the "PointerReleased" event definition).
-#endif
+            IsEnabledChanged += new DependencyPropertyChangedEventHandler(OnIsEnabledChanged);
+            Loaded += (o, e) => UpdateVisualStates();
         }
 
         private void OnIsEnabledChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -255,6 +248,20 @@ namespace Windows.UI.Xaml.Controls.Primitives
             OnClick();
         }
 
+        /// <summary>
+        /// Builds the visual tree for the <see cref="ButtonBase" /> control when 
+        /// a new template is applied.
+        /// </summary>
+#if MIGRATION
+        public override void OnApplyTemplate()
+#else
+        protected override void OnApplyTemplate()
+#endif
+        {
+            base.OnApplyTemplate();
+            UpdateVisualStates();
+        }
+        
 #if MIGRATION
         protected override void OnMouseLeftButtonDown(MouseButtonEventArgs eventArgs)
 #else
@@ -266,17 +273,25 @@ namespace Windows.UI.Xaml.Controls.Primitives
 #else
             base.OnPointerPressed(eventArgs);
 #endif
+
+            if (eventArgs.Handled || ClickMode == ClickMode.Hover)
+            {
+                return;
+            }
+
             eventArgs.Handled = true;
 
+            Focus();
+
 #if MIGRATION
-            this.CaptureMouse();
+            CaptureMouse();
 #else
-            this.CapturePointer();
+            CapturePointer();
 #endif
             _timerToReleaseCaptureAutomaticallyIfNoMouseUpEvent.Stop();
             _timerToReleaseCaptureAutomaticallyIfNoMouseUpEvent.Start();
 
-            this.IsPressed = true;
+            IsPressed = true;
 
             if (ClickMode == ClickMode.Press)
                 OnClick();
@@ -291,17 +306,22 @@ namespace Windows.UI.Xaml.Controls.Primitives
             //todo: investigate why we enter twice in this method for each click.
 
 #if MIGRATION
+            base.OnMouseLeftButtonUp(eventArgs);
+#else
+            base.OnPointerReleased(eventArgs);
+#endif
+
+            if (eventArgs.Handled || ClickMode == ClickMode.Hover)
+            {
+                return;
+            }
+
+#if MIGRATION
             if (this.IsMouseCaptured) // Avoids calling the OnPointerReleased method twice for each click (cf. todo above)
 #else
             if (this.IsPointerCaptured) // Avoids calling the OnPointerReleased method twice for each click (cf. todo above)
 #endif
             {
-
-#if MIGRATION
-                base.OnMouseLeftButtonUp(eventArgs);
-#else
-                base.OnPointerReleased(eventArgs);
-#endif
                 eventArgs.Handled = true;
 
                 StopPointerCapture();
@@ -520,9 +540,9 @@ namespace Windows.UI.Xaml.Controls.Primitives
         }
 
 #if MIGRATION
-        protected internal override void OnMouseLeave(MouseEventArgs eventArgs)
+        protected override void OnMouseLeave(MouseEventArgs eventArgs)
 #else
-        protected internal override void OnPointerExited(PointerRoutedEventArgs eventArgs)
+        protected override void OnPointerExited(PointerRoutedEventArgs eventArgs)
 #endif
         {
 #if MIGRATION
@@ -606,6 +626,15 @@ namespace Windows.UI.Xaml.Controls.Primitives
             else
             {
                 GoToState(VisualStates.StateNormal);
+            }
+
+            if (IsFocused)
+            {
+                GoToState(VisualStates.StateFocused);
+            }
+            else
+            {
+                GoToState(VisualStates.StateUnfocused);
             }
         }
     }

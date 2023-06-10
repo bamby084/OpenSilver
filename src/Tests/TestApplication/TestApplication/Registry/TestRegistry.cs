@@ -15,6 +15,7 @@ namespace TestApplication
             Tests.Add(new Test("ToolTip", "ToolTip"));
             Tests.Add(new Test("ContextMenu", "ContextMenu"));
             Tests.Add(new Test("DateTime", "DateTime"));
+            Tests.Add(new Test("DatePicker", "DatePicker"));
             Tests.Add(new Test("ItemsControl", "ItemsControl"));
             Tests.Add(new Test("ComboBox", "ComboBox"));
             Tests.Add(new Test("AutoCompleteBox", "AutoCompleteBox"));
@@ -133,7 +134,14 @@ namespace TestApplication
 			shapes.Add(new Test("Polygon", "Shapes/Polygon"));
 			Tests.Add(shapes);
 
+            TestCategory dragDropTargets = new TestCategory("DragDropTargets");
+            dragDropTargets.Add(new Test("PanelDragDropTarget", "DragDropTarget/PanelDragDropTarget"));
+            dragDropTargets.Add(new Test("ListBoxDragDropTarget", "DragDropTarget/ListBoxDragDropTarget"));
+            dragDropTargets.Add(new Test("TreeViewDragDropTarget", "DragDropTarget/TreeViewDragDropTarget"));
+            Tests.Add(dragDropTargets);
+
             Tests.Add(new Test("OpenFileDialog", "OpenFileDialog"));
+            Tests.Add(new Test("PopupWindow", "PopupWindow"));
         }
     }
 }

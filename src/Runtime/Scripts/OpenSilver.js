@@ -13,16 +13,31 @@
 *
 \*====================================================================================*/
 
+promises = [];
+
 // Load all css and js files
 (function (names) {
     names.forEach((name) => {
         var extension = name.split('.').pop();
         var url = name + "?date=" + new Date().toISOString();
         if (extension == 'js') {
-            var el = document.createElement('script');
-            el.setAttribute('type', 'application/javascript');
-            el.setAttribute('src', url);
-            document.getElementsByTagName('head')[0].appendChild(el);
+            //create a new promise to load the file, which wil help us know when the loading is done.
+            promises.push(new Promise((resolve, reject) => {
+                var el = document.createElement('script');
+                el.setAttribute('type', 'application/javascript');
+                el.setAttribute('src', url);
+                //register to the events of the script loading to settle the promise:
+                el.onload = function () {
+                    resolve(url);
+                };
+                // if it fails, return reject
+                el.onerror = function () {
+                    reject(url);
+                }
+                //attach the script tag.
+                document.getElementsByTagName('head')[0].appendChild(el);
+
+            }));
         }
         else if (extension == 'css') {
             var el = document.createElement('link');
@@ -36,12 +51,15 @@
     'libs/flatpickr.css',
     'libs/quill.core.css',
     'libs/cshtml5.js',
-    'libs/fastclick.js',
     'libs/velocity.js',
     'libs/flatpickr.js',
     'libs/ResizeSensor.js',
-    'libs/ResizeObserver.js',
-    'libs/quill.min.js']));
+    'libs/ResizeObserver.js',    
+    'libs/quill.min.js',
+    'libs/html2canvas.js']));
+
+//the function defined below returns a promise that can be awaited so we know the js files above have all been loaded (or failed, but we went through all of them).
+window.getOSFilesLoadedPromise = () => { return Promise.allSettled(promises); };
 
 window.onCallBack = (function () {
     const opensilver = "OpenSilver";
@@ -60,15 +78,16 @@ window.onCallBack = (function () {
                 // if we deal with an array, we need to check
                 // that all the items are primitive types.
                 if (Array.isArray(args)) {
-                    callbackArgs = args;
+                    callbackArgs = [];
                     for (let i = 0; i < args.length; i++) {
                         let itemType = typeof args[i];
-                        if (!(args[i] === null || itemType === 'number' || itemType === 'string' || itemType === 'boolean' ||
+                        if ((args[i] === null || itemType === 'number' || itemType === 'string' || itemType === 'boolean' ||
                             // Check for TypedArray. This is used for reading binary data for FileReader for example
                             (ArrayBuffer.isView(args[i]) && !(args[i] instanceof DataView))
                         )) {
-                            callbackArgs = [];
-                            break;
+                            callbackArgs.push(args[i]);
+                        } else {
+                            callbackArgs.push(undefined);
                         }
                     }
                     break;
@@ -99,22 +118,14 @@ window.onCallBack = (function () {
 })();
 
 window.callJS = function (javaScriptToExecute) {
-    //console.log(javaScriptToExecute);
-
     var result = eval(javaScriptToExecute);
-    //console.log(result);
     var resultType = typeof result;
     if (resultType == 'string' || resultType == 'number' || resultType == 'boolean') {
-        //if (typeof result !== 'undefined' && typeof result !== 'function') {
-        //console.log("supported");
-        return result;
-    }
-    else {
-        //console.log("not supported");
-        if (resultType === 'undefined')
-            return "[UNDEFINED]";
-        else
-            return result + " [NOT USABLE DIRECTLY IN C#] (" + resultType + ")";
+       return result;
+    } else if (result == null) {
+        return null;
+    } else {     
+        return result + " [NOT USABLE DIRECTLY IN C#] (" + resultType + ")";
     }
 };
 
@@ -125,10 +136,39 @@ window.callJSUnmarshalled = function (javaScriptToExecute) {
     if (resultType == 'string' || resultType == 'number' || resultType == 'boolean') {
         return BINDING.js_to_mono_obj(result);
     }
-    else {
-        if (resultType === 'undefined')
-            return BINDING.js_to_mono_obj("[UNDEFINED]");
-        else
-            return BINDING.js_to_mono_obj(result + " [NOT USABLE DIRECTLY IN C#] (" + resultType + ")");
+    else if (result == null) {
+        return null;
+    } else {
+        return BINDING.js_to_mono_obj(result + " [NOT USABLE DIRECTLY IN C#] (" + resultType + ")");
     }
-}; 
+};
+
+window.callJSUnmarshalled_v2 = function (javaScriptToExecute, referenceId, wantsResult) {
+    javaScriptToExecute = BINDING.conv_string(javaScriptToExecute);
+    var result = eval(javaScriptToExecute);
+
+    if (referenceId >= 0)
+        document.jsObjRef[referenceId.toString()] = result;
+
+    if (!wantsResult) 
+        return;
+
+    var resultType = typeof result;
+    if (resultType == 'string' || resultType == 'number' || resultType == 'boolean') {
+        return BINDING.js_to_mono_obj(result);
+    } else if (result == null) {
+        return null;
+    } else {
+        return BINDING.js_to_mono_obj(result + " [NOT USABLE DIRECTLY IN C#] (" + resultType + ")");
+    }
+};
+
+// IMPORTANT: this doesn't return anything (this just executes the pending async JS)
+window.callJSUnmarshalledHeap = (function () {
+    const textDecoder = new TextDecoder('utf-16le');
+    return function (arrAddress, length) {
+        const byteArray = Module.HEAPU8.subarray(arrAddress + 16, arrAddress + 16 + length);
+        const javaScriptToExecute = textDecoder.decode(byteArray);
+        eval(javaScriptToExecute);
+    };
+})();

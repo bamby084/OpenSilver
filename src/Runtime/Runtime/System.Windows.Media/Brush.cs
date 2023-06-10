@@ -13,7 +13,19 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading.Tasks;
+using System.ComponentModel;
+using System.Threading;
 using CSHTML5.Internal;
+using OpenSilver.Internal;
+
+#if MIGRATION
+using System.Windows.Controls;
+#else
+using Windows.UI.Xaml.Controls;
+#endif
 
 #if MIGRATION
 namespace System.Windows.Media
@@ -25,11 +37,28 @@ namespace Windows.UI.Xaml.Media
     /// Defines objects used to paint graphical objects. Classes that derive from
     /// Brush describe how the area is painted.
     /// </summary>
-    public partial class Brush : DependencyObject, IHasAccessToPropertiesWhereItIsUsed
+    public partial class Brush : DependencyObject,
+        IHasAccessToPropertiesWhereItIsUsed2,
+#pragma warning disable CS0618 // Type or member is obsolete
+        IHasAccessToPropertiesWhereItIsUsed
+#pragma warning restore CS0618 // Type or member is obsolete
     {
+        private static readonly BrushHolder _holder = new();
+        private readonly int _id;
+        
+        protected Brush()
+        {
+            _id = _holder.Add(this);
+        }
+
+        ~Brush()
+        {
+            _holder.Remove(_id);
+        }
+
         internal static Brush Parse(string source)
         {
-            return new SolidColorBrush((Color)Color.INTERNAL_ConvertFromString(source));
+            return new SolidColorBrush(Color.INTERNAL_ConvertFromString(source));
         }
 
         /// <summary>
@@ -49,112 +78,115 @@ namespace Windows.UI.Xaml.Media
         public static readonly DependencyProperty OpacityProperty =
             DependencyProperty.Register("Opacity", typeof(double), typeof(Brush), new PropertyMetadata(1d));
 
-        private HashSet<KeyValuePair<DependencyObject, DependencyProperty>> _propertiesWhereUsed;
+        private HashSet<KeyValuePair<DependencyObject, DependencyProperty>> _propertiesWhereUsedObsolete;
+
+        [Obsolete(Helper.ObsoleteMemberMessage)]
         public HashSet<KeyValuePair<DependencyObject, DependencyProperty>> PropertiesWhereUsed
+                => _propertiesWhereUsedObsolete ??= new();
+
+        private Dictionary<WeakDependencyObjectWrapper, HashSet<DependencyProperty>> _propertiesWhereUsed;
+
+        Dictionary<WeakDependencyObjectWrapper, HashSet<DependencyProperty>> IHasAccessToPropertiesWhereItIsUsed2.PropertiesWhereUsed
+            => _propertiesWhereUsed ??= new();
+
+        internal static List<CSSEquivalent> MergeCSSEquivalentsOfTheParentsProperties(
+            IHasAccessToPropertiesWhereItIsUsed2 brush,
+            Func<CSSEquivalent, ValueToHtmlConverter> parentPropertyToValueToHtmlConverter) // note: "CSSEquivalent" here stands for the CSSEquicalent of the parent property.
         {
-            get
+            var result = new List<CSSEquivalent>();
+            foreach (var item in brush.PropertiesWhereUsed.ToArray())
             {
-                if(_propertiesWhereUsed == null)
+                if (!item.Key.TryGetDependencyObject(out DependencyObject dependencyObject))
                 {
-                    _propertiesWhereUsed = new HashSet<KeyValuePair<DependencyObject, DependencyProperty>>();
+                    brush.PropertiesWhereUsed.Remove(item.Key);
+                    continue;
                 }
-                return _propertiesWhereUsed;
-            }
-        }
 
-        internal static List<CSSEquivalent> MergeCSSEquivalentsOfTheParentsProperties(Brush brush, Func<CSSEquivalent, ValueToHtmlConverter> parentPropertyToValueToHtmlConverter) // note: "CSSEquivalent" here stands for the CSSEquicalent of the parent property.
-        {
-            List<CSSEquivalent> result = new List<CSSEquivalent>();
-            //We copy brush.PropertiesWhereUsed in a local variable because we need to modify it in the foreach:
-            HashSet<KeyValuePair<DependencyObject, DependencyProperty>> propertiesWhereUsed = new HashSet<KeyValuePair<DependencyObject, DependencyProperty>>();
-            foreach (KeyValuePair<DependencyObject, DependencyProperty> tuple in brush.PropertiesWhereUsed)
-            {
-                propertiesWhereUsed.Add(tuple);
-            }
-
-            foreach (KeyValuePair<DependencyObject, DependencyProperty> tuple in propertiesWhereUsed)
-            {
-                UIElement uiElement = tuple.Key as UIElement;
-                DependencyProperty dependencyProperty = tuple.Value;
-                if (uiElement != null)
+                if (dependencyObject is not UIElement uiElement)
                 {
-                    if (!INTERNAL_VisualTreeManager.IsElementInVisualTree(uiElement))
-                    {
-                        brush.PropertiesWhereUsed.Remove(tuple);
-                    }
-                    else
-                    {
-                        PropertyMetadata propertyMetadata = dependencyProperty.GetTypeMetaData(uiElement.GetType());
-                        if (propertyMetadata.GetCSSEquivalent != null) // If the parent has a CSSEquivalent, we use it, otherwise we use the parent PropertyChanged method.
-                        {
-                            var parentPropertyCSSEquivalent = propertyMetadata.GetCSSEquivalent(uiElement);
-                            if (parentPropertyCSSEquivalent != null)
-                            {
-                                CSSEquivalent newCSSEquivalent = new CSSEquivalent()
-                                {
-                                    Name = parentPropertyCSSEquivalent.Name,
-                                    ApplyAlsoWhenThereIsAControlTemplate = parentPropertyCSSEquivalent.ApplyAlsoWhenThereIsAControlTemplate,
+                    continue;
+                }
 
-                                    Value = parentPropertyToValueToHtmlConverter(parentPropertyCSSEquivalent),
-                                    DomElement = parentPropertyCSSEquivalent.DomElement,
-                                    UIElement = uiElement
-                                };
-                                if (newCSSEquivalent.DomElement == null)
-                                {
-                                    newCSSEquivalent.DomElement = uiElement.INTERNAL_OuterDomElement;
-                                }
-                                result.Add(newCSSEquivalent);
-                            }
-                        }
-                        else if (propertyMetadata.GetCSSEquivalents != null)
-                        {
-                            var parentPropertyCSSEquivalents = propertyMetadata.GetCSSEquivalents(uiElement);
-                            foreach (var parentPropertyCSSEquivalent in parentPropertyCSSEquivalents)
-                            {
-                                if (parentPropertyCSSEquivalent != null)
-                                {
-                                    CSSEquivalent newCSSEquivalent = new CSSEquivalent()
-                                    {
-                                        Name = parentPropertyCSSEquivalent.Name,
-                                        ApplyAlsoWhenThereIsAControlTemplate = parentPropertyCSSEquivalent.ApplyAlsoWhenThereIsAControlTemplate,
+                if (!INTERNAL_VisualTreeManager.IsElementInVisualTree(uiElement))
+                {
+                    brush.PropertiesWhereUsed.Remove(item.Key);
+                    continue;
+                }
 
-                                        Value = parentPropertyToValueToHtmlConverter(parentPropertyCSSEquivalent),
-                                        DomElement = parentPropertyCSSEquivalent.DomElement,
-                                        UIElement = uiElement
-                                    };
-                                    if (newCSSEquivalent.DomElement == null)
-                                    {
-                                        newCSSEquivalent.DomElement = uiElement.INTERNAL_OuterDomElement;
-                                    }
-                                    result.Add(newCSSEquivalent);
-                                }
-                            }
+                foreach (var dependencyProperty in item.Value)
+                {
+                    if (dependencyProperty == Border.BorderBrushProperty)
+                    {
+                        if (brush is LinearGradientBrush)
+                        {
+                            result.Add(ProcessCSSEquivalent(
+                                new CSSEquivalent { Name = new List<string>(1) { "border-image-source" } },
+                                uiElement,
+                                parentPropertyToValueToHtmlConverter));
+
+                            result.Add(ProcessCSSEquivalent(
+                                new CSSEquivalent { Name = new List<string>(1) { "border-image-slice" } },
+                                uiElement,
+                                parentPropertyToValueToHtmlConverter));
                         }
                         else
                         {
-                            //we want to create a CSSEquivalent that will just make the UIElement call the property callback if any:
-                            if (propertyMetadata.PropertyChangedCallback != null)
-                            {
-                                result.Add(new CSSEquivalent()
-                                {
-                                    UIElement = uiElement,
-                                    CallbackMethod = propertyMetadata.PropertyChangedCallback,
-                                    DependencyProperty = dependencyProperty
-                                });
-                            }
+                            result.Add(ProcessCSSEquivalent(
+                                new CSSEquivalent { Name = new List<string>(1) { "borderColor" } },
+                                uiElement,
+                                parentPropertyToValueToHtmlConverter));
                         }
                     }
-                }
-                else
-                {
-                    //Commented because it could be a Setter in a Style
-                    //throw new NotSupportedException("A solidColorBrush cannot currently be set inside a class that desn't inherit from UIElement.");
+                    else if (dependencyProperty == Border.BackgroundProperty ||
+                        dependencyProperty == Panel.BackgroundProperty ||
+                        dependencyProperty == Control.BackgroundProperty)
+                    {
+                        result.Add(ProcessCSSEquivalent(
+                            new CSSEquivalent { Name = new List<string>(3) { "background", "backgroundColor", "backgroundColorAlpha" } },
+                            uiElement,
+                            parentPropertyToValueToHtmlConverter));
+                    }
+                    else if (dependencyProperty == Control.ForegroundProperty)
+                    {
+                        result.Add(ProcessCSSEquivalent(
+                            new CSSEquivalent
+                            {
+                                Name = new List<string>(2) { "color", "colorAlpha" },
+                                ApplyAlsoWhenThereIsAControlTemplate = true,
+                            },
+                            uiElement,
+                            parentPropertyToValueToHtmlConverter));
+                    }
+                    else
+                    {
+                        result.Add(ProcessCSSEquivalent(
+                            new CSSEquivalent
+                            {
+                                CallbackMethod = dependencyProperty.GetMetadata(uiElement.GetType()).PropertyChangedCallback,
+                                DependencyProperty = dependencyProperty
+                            },
+                            uiElement,
+                            parentPropertyToValueToHtmlConverter));
+                    }
                 }
             }
             return result;
+
+            static CSSEquivalent ProcessCSSEquivalent(CSSEquivalent cssEquivalent,
+                UIElement uie,
+                Func<CSSEquivalent, ValueToHtmlConverter> valueConverter)
+            {
+                cssEquivalent.Value = valueConverter(cssEquivalent);
+                cssEquivalent.DomElement ??= uie.INTERNAL_OuterDomElement;
+                cssEquivalent.UIElement = uie;
+                return cssEquivalent;
+            }
         }
 
-        #region Transform, RelativeTransform (Not supported yet)
+        internal virtual Task<string> GetDataStringAsync(UIElement parent)
+            => Task.FromResult(string.Empty);
+
+#region Transform, RelativeTransform (Not supported yet)
         /// <summary>Identifies the <see cref="P:System.Windows.Media.Brush.RelativeTransform" /> dependency property. </summary>
         /// <returns>The <see cref="P:System.Windows.Media.Brush.RelativeTransform" /> dependency property identifier.</returns>
         [OpenSilver.NotImplemented]
@@ -182,5 +214,98 @@ namespace Windows.UI.Xaml.Media
             set { SetValue(TransformProperty, value); }
         }
         #endregion
+
+        // if true, log PropertiesWhereUsed updates (how many dead weak references we removed)
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static bool LogBrushDeadWeakReferencesUpdates { get; set; } = false;
+
+        // if = 0, don't update at all (so you can test before/after scenarios)
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static int UpdateBrushWeakReferencesSecs { get; set; } = 30;
+
+        private sealed class BrushHolder
+        {
+            private readonly Dictionary<int, WeakReference<IHasAccessToPropertiesWhereItIsUsed2>> _brushes = new();
+            private int _nextId;
+
+            public BrushHolder()
+            {
+                UpdatePropertiesWhereUsedForever();
+            }
+
+            public int Add(Brush brush)
+            {
+                int id = Interlocked.Increment(ref _nextId);
+                _brushes.Add(id, new WeakReference<IHasAccessToPropertiesWhereItIsUsed2>(brush));
+                return id;
+            }
+
+            public void Remove(int id) => _brushes.Remove(id);
+
+            private async void UpdatePropertiesWhereUsedForever()
+            {
+                // ... just in case you set Brush.UpdateBrushWeakReferencesSecs, so that it'll take effect from the get-go
+                await Task.Delay(1000);
+
+                while (true)
+                {
+                    if (UpdateBrushWeakReferencesSecs <= 0) break;
+
+                    await Task.Delay(UpdateBrushWeakReferencesSecs * 1000);
+                    UpdatePropertiesWhereUsed();
+                }
+            }
+
+            private void UpdatePropertiesWhereUsed()
+            {
+                int disposedRefCount = 0;
+                int fullCount = 0;
+                foreach (var brushRef in _brushes.Values)
+                {
+                    if (!brushRef.TryGetTarget(out var brush))
+                    {
+                        // If the weak reference is dead, it means the brush finalizer has not
+                        // been called yet.
+                        continue;
+                    }
+
+                    foreach (var listener in brush.PropertiesWhereUsed.ToArray())
+                    {
+                        if (!listener.Key.TryGetDependencyObject(out _))
+                        {
+                            brush.PropertiesWhereUsed.Remove(listener.Key);
+                            if (LogBrushDeadWeakReferencesUpdates)
+                            {
+                                disposedRefCount += listener.Value.Count;
+                            }
+
+                            continue;
+                        }
+
+                        if (LogBrushDeadWeakReferencesUpdates)
+                        {
+                            fullCount += listener.Value.Count;
+                        }
+                    }
+                }
+
+                if (LogBrushDeadWeakReferencesUpdates)
+                {
+                    Log($"*** Brushes : {_brushes.Count}, disposed={disposedRefCount}/{fullCount} ({(100d * disposedRefCount / fullCount):F2}%)");
+                }
+            }
+
+            private static void Log(string msg)
+            {
+                if (OpenSilver.Interop.IsRunningInTheSimulator)
+                {
+                    Trace.WriteLine(msg);
+                }
+                else
+                {
+                    Console.WriteLine(msg);
+                }
+            }
+        }
     }
 }

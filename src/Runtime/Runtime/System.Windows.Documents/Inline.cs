@@ -1,5 +1,4 @@
 ﻿
-
 /*===================================================================================
 * 
 *   Copyright (c) Userware/OpenSilver.net
@@ -13,13 +12,10 @@
 \*====================================================================================*/
 
 using CSHTML5.Internal;
-#if MIGRATION
-using System.Windows.Controls;
-#else
-using Windows.UI.Text;
-using Windows.UI.Xaml.Controls;
-#endif
 
+#if !MIGRATION
+using Windows.UI.Text;
+#endif
 
 #if MIGRATION
 namespace System.Windows.Documents
@@ -30,7 +26,7 @@ namespace Windows.UI.Xaml.Documents
     /// <summary>
     /// Provides a base class for inline text elements, such as Span and Run.
     /// </summary>
-    public abstract partial class Inline : TextElement
+    public abstract class Inline : TextElement
     {
         internal override bool EnablePointerEventsCore
         {
@@ -67,7 +63,11 @@ namespace Windows.UI.Xaml.Documents
                 typeof(Inline), 
                 new PropertyMetadata((object)null) 
                 {
-                    GetCSSEquivalent = Control.INTERNAL_GetCSSEquivalentForTextDecorations
+                    MethodToUpdateDom = static (d, newValue) =>
+                    {
+                        var domStyle = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(((Inline)d).INTERNAL_OuterDomElement);
+                        domStyle.textDecoration = ((TextDecorationCollection)newValue)?.ToHtmlString() ?? string.Empty;
+                    },
                 });
 #else
                 /// <summary>
@@ -82,11 +82,32 @@ namespace Windows.UI.Xaml.Documents
         /// Identifies the TextDecorations dependency property.
         /// </summary>
         public new static readonly DependencyProperty TextDecorationsProperty =
-            DependencyProperty.Register("TextDecorations", typeof(TextDecorations?), typeof(Inline), new PropertyMetadata(null)
-            {
-                GetCSSEquivalent = Control.INTERNAL_GetCSSEquivalentForTextDecorations
-            }
-            );
+            DependencyProperty.Register(
+                nameof(TextDecorations),
+                typeof(TextDecorations?),
+                typeof(Inline),
+                new PropertyMetadata(null)
+                {
+                    MethodToUpdateDom = static (d, newValue) =>
+                    {
+                        var domStyle = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(((Inline)d).INTERNAL_OuterDomElement);
+                        var newTextDecoration = (TextDecorations?)newValue;
+                        if (newTextDecoration.HasValue)
+                        {
+                            domStyle.textDecoration = newTextDecoration switch
+                            {
+                                Text.TextDecorations.OverLine => "overline",
+                                Text.TextDecorations.Strikethrough => "line-through",
+                                Text.TextDecorations.Underline => "underline",
+                                _ => "",
+                            };
+                        }
+                        else
+                        {
+                            domStyle.textDecoration = "";
+                        }
+                    },
+                });
 #endif
         
         protected override void OnAfterApplyHorizontalAlignmentAndWidth()

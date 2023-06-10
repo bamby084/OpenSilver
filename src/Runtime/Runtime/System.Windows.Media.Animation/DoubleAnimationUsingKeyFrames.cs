@@ -101,44 +101,7 @@ namespace Windows.UI.Xaml.Media.Animation
         internal override void GetTargetInformation(IterationParameters parameters)
         {
             _parameters = parameters;
-            DependencyObject target;
-            PropertyPath propertyPath;
-            DependencyObject targetBeforePath;
-            GetPropertyPathAndTargetBeforePath(parameters, out targetBeforePath, out propertyPath);
-            DependencyObject parentElement = targetBeforePath; //this will be the parent of the clonable element (if any).
-            foreach (Tuple<DependencyObject, DependencyProperty, int?> element in GoThroughElementsToAccessProperty(propertyPath, targetBeforePath))
-            {
-                DependencyObject depObject = element.Item1;
-                DependencyProperty depProp = element.Item2;
-                int? index = element.Item3;
-                if (depObject is ICloneOnAnimation)
-                {
-                    if (!((ICloneOnAnimation)depObject).IsAlreadyAClone())
-                    {
-                        object clone = ((ICloneOnAnimation)depObject).Clone();
-                        if (index != null)
-                        {
-#if BRIDGE
-                            parentElement.GetType().GetProperty("Item").SetValue(parentElement, clone, new object[] { index });
-#else
-                            //JSIL does not support SetValue(object, object, object[])
-#endif
-                        }
-                        else
-                        {
-                            parentElement.SetValue(depProp, clone);
-                        }
-                    }
-                    break;
-                }
-                else
-                {
-                    parentElement = depObject;
-                }
-            }
-
-            GetTargetElementAndPropertyInfo(parameters, out target, out propertyPath);
-
+            GetTargetElementAndPropertyInfo(parameters, out DependencyObject target, out PropertyPath propertyPath);
             _propertyContainer = target;
             _targetProperty = propertyPath;
             _propDp = GetProperty(_propertyContainer, _targetProperty);
@@ -154,6 +117,14 @@ namespace Windows.UI.Xaml.Media.Animation
 
         internal override void Apply(IterationParameters parameters, bool isLastLoop)
         {
+            Duration duration = ResolveDuration();
+            if (IsZeroDuration(duration))
+            {
+                SetFinalValue();
+                OnIterationCompleted(parameters);
+                return;
+            }
+
             _animationID = Guid.NewGuid();
             ApplyKeyFrame(GetNextKeyFrame(), isLastLoop);
         }
@@ -163,7 +134,7 @@ namespace Windows.UI.Xaml.Media.Animation
             if (keyFrame != null)
             {
                 //we make a specific name for this animation:
-                string specificGroupName = animationInstanceSpecificName.ToString();
+                string specificGroupName = animationInstanceSpecificName;
 
                 bool cssEquivalentExists = false;
                 if (_propertyMetadata.GetCSSEquivalent != null)
@@ -172,8 +143,15 @@ namespace Windows.UI.Xaml.Media.Animation
                     if (cssEquivalent != null)
                     {
                         cssEquivalentExists = true;
-                        StartAnimation(_propertyContainer, cssEquivalent, null, keyFrame.Value, GetKeyFrameDuration(keyFrame), keyFrame.INTERNAL_GetEasingFunction(), specificGroupName, _propDp,
-                        OnKeyFrameCompleted(_parameters, isLastLoop, keyFrame.Value, _propertyContainer, _targetProperty, _animationID));
+                        StartAnimation(_propertyContainer,
+                            cssEquivalent,
+                            null,
+                            keyFrame.Value,
+                            GetKeyFrameDuration(keyFrame),
+                            keyFrame.INTERNAL_GetEasingFunction(),
+                            specificGroupName,
+                            _propDp,
+                            GetKeyFrameCompletedCallback(_parameters, isLastLoop, keyFrame.Value, _propertyContainer, _targetProperty, _animationID));
                     }
                 }
                 //todo: use GetCSSEquivalent instead (?)
@@ -183,14 +161,21 @@ namespace Windows.UI.Xaml.Media.Animation
                     foreach (CSSEquivalent equivalent in cssEquivalents)
                     {
                         cssEquivalentExists = true;
-                        StartAnimation(_propertyContainer, equivalent, null, keyFrame.Value, Duration, keyFrame.INTERNAL_GetEasingFunction(), specificGroupName, _propDp,
-                        OnKeyFrameCompleted(_parameters, isLastLoop, keyFrame.Value, _propertyContainer, _targetProperty, _animationID));
+                        StartAnimation(_propertyContainer,
+                            equivalent,
+                            null,
+                            keyFrame.Value,
+                            GetKeyFrameDuration(keyFrame),
+                            keyFrame.INTERNAL_GetEasingFunction(),
+                            specificGroupName,
+                            _propDp,
+                            GetKeyFrameCompletedCallback(_parameters, isLastLoop, keyFrame.Value, _propertyContainer, _targetProperty, _animationID));
                     }
                 }
 
                 if (!cssEquivalentExists)
                 {
-                    OnKeyFrameCompleted(_parameters, isLastLoop, keyFrame.Value, _propertyContainer, _targetProperty, _animationID)();
+                    OnKeyFrameCompleted(_parameters, isLastLoop, keyFrame.Value, _propertyContainer, _targetProperty, _animationID);
                 }
             }
         }
@@ -200,23 +185,35 @@ namespace Windows.UI.Xaml.Media.Animation
             return _keyFrameToDurationMap[keyFrame];
         }
 
-        private Action OnKeyFrameCompleted(IterationParameters parameters, bool isLastLoop, object value, DependencyObject target, PropertyPath propertyPath, Guid callBackGuid)
+        private void OnKeyFrameCompleted(IterationParameters parameters,
+            bool isLastLoop,
+            object value, 
+            DependencyObject target,
+            PropertyPath propertyPath,
+            Guid callBackGuid)
         {
-            return () =>
+            if (!_isUnapplied)
             {
-                if (!this._isUnapplied)
+                if (_animationID == callBackGuid)
                 {
-                    if (_animationID == callBackGuid)
+                    AnimationHelpers.ApplyValue(target, propertyPath, value);
+                    _appliedKeyFramesCount++;
+                    if (!CheckTimeLineEndAndRaiseCompletedEvent(_parameters))
                     {
-                        AnimationHelpers.ApplyValue(target, propertyPath, value);
-                        _appliedKeyFramesCount++;
-                        if (!CheckTimeLineEndAndRaiseCompletedEvent(_parameters))
-                        {
-                            ApplyKeyFrame(GetNextKeyFrame(), isLastLoop);
-                        }
+                        ApplyKeyFrame(GetNextKeyFrame(), isLastLoop);
                     }
                 }
-            };
+            }
+        }
+
+        private Action GetKeyFrameCompletedCallback(IterationParameters parameters,
+            bool isLastLoop,
+            object value,
+            DependencyObject target,
+            PropertyPath propertyPath,
+            Guid callBackGuid)
+        {
+            return () => OnKeyFrameCompleted(parameters, isLastLoop, value, target, propertyPath, callBackGuid);
         }
 
         private DoubleKeyFrame GetNextKeyFrame()
@@ -236,16 +233,21 @@ namespace Windows.UI.Xaml.Media.Animation
         {
             if (!_cancelledAnimation)
             {
-                DoubleKeyFrame lastKeyFrame = _keyFrames[_resolvedKeyFrames.GetNextKeyFrameIndex(_keyFrames.Count - 1)];
-                AnimationHelpers.ApplyValue(_propertyContainer, _targetProperty, lastKeyFrame.Value);
+                SetFinalValue();
             }
         }
+
+        private void SetFinalValue()
+            => AnimationHelpers.ApplyValue(
+                _propertyContainer,
+                _targetProperty,
+                _keyFrames[_resolvedKeyFrames.GetNextKeyFrameIndex(_keyFrames.Count - 1)].Value);
 
         internal override void StopAnimation()
         {
             if (_isInitialized)
             {
-                string specificGroupName = animationInstanceSpecificName.ToString();
+                string specificGroupName = animationInstanceSpecificName;
 
                 if (_propertyMetadata.GetCSSEquivalent != null)
                 {
@@ -264,7 +266,8 @@ namespace Windows.UI.Xaml.Media.Animation
                             }
                             if (cssEquivalent.DomElement != null)
                             {
-                                CSHTML5.Interop.ExecuteJavaScriptAsync(@"Velocity($0, ""stop"", $1);", cssEquivalent.DomElement, specificGroupName);
+                                string sDomElement = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(cssEquivalent.DomElement);
+                                AnimationHelpers.StopVelocity(sDomElement, specificGroupName);
                             }
                         }
                     }
@@ -276,7 +279,8 @@ namespace Windows.UI.Xaml.Media.Animation
                     {
                         if (equivalent.DomElement != null)
                         {
-                            CSHTML5.Interop.ExecuteJavaScriptAsync(@"Velocity($0, ""stop"", $1);", equivalent.DomElement, specificGroupName);
+                            string sDomElement = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(equivalent.DomElement);
+                            AnimationHelpers.StopVelocity(sDomElement, specificGroupName);
                         }
                     }
                 }
@@ -303,15 +307,14 @@ namespace Windows.UI.Xaml.Media.Animation
 
         internal override void InitializeCore()
         {
-            this.Completed -= ApplyLastKeyFrame;
-            this.Completed += ApplyLastKeyFrame;
+            Completed -= ApplyLastKeyFrame;            
             InitializeKeyFramesSet();
             _propertyMetadata = _propDp.GetTypeMetaData(_propertyContainer.GetType());
-        }
 
-        internal override void RestoreDefaultCore()
-        {
-            _appliedKeyFramesCount = 0;
+            if (!IsZeroDuration(ResolveDuration()))
+            {
+                Completed += ApplyLastKeyFrame;
+            }
         }
 
         protected override Duration GetNaturalDurationCore()
@@ -319,8 +322,7 @@ namespace Windows.UI.Xaml.Media.Animation
             return new Duration(LargestTimeSpanKeyTime);
         }
 
-
-        static void StartAnimation(DependencyObject target, CSSEquivalent cssEquivalent, double? from, object to, Duration Duration, EasingFunctionBase easingFunction, string visualStateGroupName, DependencyProperty dependencyProperty, Action callbackForWhenfinished = null)
+        private void StartAnimation(DependencyObject target, CSSEquivalent cssEquivalent, double? from, object to, Duration Duration, EasingFunctionBase easingFunction, string visualStateGroupName, DependencyProperty dependencyProperty, Action callbackForWhenfinished = null)
         {
             if (cssEquivalent.Name != null && cssEquivalent.Name.Count != 0)
             {
@@ -340,26 +342,32 @@ namespace Windows.UI.Xaml.Media.Animation
                         {
                             cssEquivalent.Value = (finalInstance, value) => { return value ?? ""; }; // Default value
                         }
-                        object cssValue = cssEquivalent.Value(target, to);
-
-                        object newObj = CSHTML5.Interop.ExecuteJavaScriptAsync(@"new Object()");
-
-                        if (AnimationHelpers.IsValueNull(from)) //todo: when using Bridge, I guess we would want to directly use "from == null" since it worked in the first place (I think).
+                        string sCssValue = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(cssEquivalent.Value(target, to));
+                        string fromToValues;
+                        if (!from.HasValue)
                         {
-                            foreach (string csspropertyName in cssEquivalent.Name)
-                            {
-                                CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0[$1] = $2;", newObj, csspropertyName, cssValue);
-                            }
+                            fromToValues = "{" + string.Join(",", cssEquivalent.Name.Select(name => $"\"{name}\":{sCssValue}")) + "}";
                         }
                         else
                         {
-                            foreach (string csspropertyName in cssEquivalent.Name)
-                            {
-                                CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0[$1] = [$2, $3];", newObj, csspropertyName, cssValue, from);
-                            }
+                            string sFrom = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(from);
+                            fromToValues = "{" + string.Join(",", cssEquivalent.Name.Select(name => $"\"{name}\":[{sCssValue},{sFrom}]")) + "}";
                         }
-                        AnimationHelpers.CallVelocity(cssEquivalent.DomElement, Duration, easingFunction, visualStateGroupName, callbackForWhenfinished, newObj);
+
+                        AnimationHelpers.CallVelocity(
+                            this,
+                            cssEquivalent.DomElement,
+                            Duration,
+                            easingFunction,
+                            visualStateGroupName,
+                            callbackForWhenfinished,
+                            fromToValues);
+
                         target.DirtyVisualValue(dependencyProperty);
+                    }
+                    else
+                    {
+                        callbackForWhenfinished?.Invoke();
                     }
                 }
             }

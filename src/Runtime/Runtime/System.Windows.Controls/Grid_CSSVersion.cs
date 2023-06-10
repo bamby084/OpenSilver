@@ -73,7 +73,7 @@ namespace Windows.UI.Xaml.Controls
             {
                 // Set the "display" CSS property:
                 var style = INTERNAL_HtmlDomManager.GetDomElementStyleForModification(_innerDiv);
-                style.display = !Grid_InternalHelpers.isMSGrid() ? style.display = "grid" : Grid_InternalHelpers.INTERNAL_CSSGRID_MS_PREFIX + "grid";
+                style.display = "grid";
             }
 
             // Normalize the sizes of the rows and columns:
@@ -135,23 +135,11 @@ namespace Windows.UI.Xaml.Controls
                     var style = INTERNAL_HtmlDomManager.GetFrameworkElementBoxSizingStyleForModification(uiElement);
 
                     style.position = "relative";
-
-                    bool isMsGrid = Grid_InternalHelpers.isMSGrid();
-                    if (!isMsGrid)
-                    {
-                        style.gridRowStart = (elementRow + 1).ToString(); //Note: +1 because rows start from 1 instead of 0 in js.
-                        style.gridColumnStart = (elementColumn + 1).ToString(); //Note: +1 because rows start from 1 instead of 0 in js.
-                        style.gridRowEnd = (elementLastRow + 2).ToString(); //Note: +1 because rows start from 1 instead of 0 in js and another + 1 because the gridRowEnd seems to be the row BEFORE WHITCH the span ends.
-                        style.gridColumnEnd = (elementLastColumn + 2).ToString(); //Note: +1 because columns start from 1 instead of 0 in js and another + 1 because the gridColumnEnd seems to be the column BEFORE WHITCH the span ends.
-                    }
-                    else
-                    {
-                        //probably doesn't work, it probably requires to use msGridRow and msGridColumn and msGridRowSpan and msGridColumnSpan
-                        style.msGridRow = (elementRow + 1).ToString(); //Note: +1 because rows start from 1 instead of 0 in js.
-                        style.msGridColumn = (elementColumn + 1).ToString(); //Note: +1 because rows start from 1 instead of 0 in js.
-                        style.msGridRowSpan = (rowSpan).ToString(); //Note: +1 because rows start from 1 instead of 0 in js and another + 1 because the gridRowEnd seems to be the row BEFORE WHITCH the span ends.
-                        style.msGridColumnSpan = (columnSpan).ToString(); //Note: +1 because columns start from 1 instead of 0 in js and another + 1 because the gridColumnEnd seems to be the column BEFORE WHITCH the span ends.
-                    }
+                    style.gridRowStart = (elementRow + 1).ToString(); //Note: +1 because rows start from 1 instead of 0 in js.
+                    style.gridColumnStart = (elementColumn + 1).ToString(); //Note: +1 because rows start from 1 instead of 0 in js.
+                    style.gridRowEnd = (elementLastRow + 2).ToString(); //Note: +1 because rows start from 1 instead of 0 in js and another + 1 because the gridRowEnd seems to be the row BEFORE WHITCH the span ends.
+                    style.gridColumnEnd = (elementLastColumn + 2).ToString(); //Note: +1 because columns start from 1 instead of 0 in js and another + 1 because the gridColumnEnd seems to be the column BEFORE WHITCH the span ends.
+                    
                     //-------------------------until here-------------------------
 
                     style.pointerEvents = "none";
@@ -164,15 +152,15 @@ namespace Windows.UI.Xaml.Controls
                     //---------------------------------------------------------------
                     if (Grid_InternalHelpers.IsAllCollapsedColumns(this, elementColumn, elementLastColumn))
                     {
-                        CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0.style.overflow = 'hidden'", uiElement.INTERNAL_OuterDomElement);
-                        CSHTML5.Interop.ExecuteJavaScriptAsync(@"$0.setAttribute('data-isCollapsedDueToHiddenColumn', true)", uiElement.INTERNAL_OuterDomElement);
+                        string sElement = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(uiElement.INTERNAL_OuterDomElement);
+                        CSHTML5.Interop.ExecuteJavaScriptFastAsync($"{sElement}.style.overflow = 'hidden'");
+                        CSHTML5.Interop.ExecuteJavaScriptFastAsync($"{sElement}.setAttribute('data-isCollapsedDueToHiddenColumn', true)");
                     }
                     else
                     {
                         // Note: we set to Visible only if it was previously Hidden due to the fact that a Grid column is hidden, to avoid conflicts such as replacing the "overflow" property set by the ScrollViewer or by the "ClipToBounds" property.
                         //setAttribute('data-isCollapsedDueToHiddenColumn', false)
-                        CSHTML5.Interop.ExecuteJavaScriptAsync(@"document.setGridCollapsedDuetoHiddenColumn($0)", 
-                            ((INTERNAL_HtmlDomElementReference)uiElement.INTERNAL_OuterDomElement).UniqueIdentifier);
+                        CSHTML5.Interop.ExecuteJavaScriptFastAsync($@"document.setGridCollapsedDuetoHiddenColumn(""{((INTERNAL_HtmlDomElementReference)uiElement.INTERNAL_OuterDomElement).UniqueIdentifier}"")");
                     }
                 }
             }
@@ -213,7 +201,7 @@ namespace Windows.UI.Xaml.Controls
             if (element.IsUnderCustomLayout)
                 return;
             int maxRow = 0;
-            if (element.IsConnectedToLiveTree && element.INTERNAL_VisualParent is Grid) //Note: this also checks if INTERNAL_VisualTreeManager.IsElementInVisualTree(element) is true because there is no point in setting it on Windows and Popups.
+            if (INTERNAL_VisualTreeManager.IsElementInVisualTree(element) && element.INTERNAL_VisualParent is Grid) //Note: this also checks if INTERNAL_VisualTreeManager.IsElementInVisualTree(element) is true because there is no point in setting it on Windows and Popups.
             {
                 Grid parent = (Grid)element.INTERNAL_VisualParent;
                 if (parent._rowDefinitionsOrNull != null && parent._rowDefinitionsOrNull.Count > 0)
@@ -229,21 +217,12 @@ namespace Windows.UI.Xaml.Controls
                     rowSpan = 1;
 
                 var style = INTERNAL_HtmlDomManager.GetFrameworkElementBoxSizingStyleForModification(element);
-                bool isMsGrid = Grid_InternalHelpers.isMSGrid();
-                if (!isMsGrid)
-                {
-                    int lastRow = elementRow + rowSpan - 1; //note: there was a -1 here before but it seems to not give he result expected.
-                    MakeGridPositionCorrect(ref lastRow, maxRow);
 
-                    style.gridRowStart = (elementRow + 1).ToString(); //Note: +1 because rows start from 1 instead of 0 in js.
-                    style.gridRowEnd = (lastRow + 2).ToString(); //Note: +1 because rows start from 1 instead of 0 in js and another + 1 because the gridRowEnd seems to be the row BEFORE WHITCH the span ends.
-                }
-                else
-                {
-                    //probably doesn't work, it probably requires to use msGridRow
-                    style.msGridRow = (elementRow + 1).ToString(); //Note: +1 because rows start from 1 instead of 0 in js.
-                    style.msGridRowSpan = (rowSpan).ToString();
-                }
+                int lastRow = elementRow + rowSpan - 1; //note: there was a -1 here before but it seems to not give he result expected.
+                MakeGridPositionCorrect(ref lastRow, maxRow);
+
+                style.gridRowStart = (elementRow + 1).ToString(); //Note: +1 because rows start from 1 instead of 0 in js.
+                style.gridRowEnd = (lastRow + 2).ToString(); //Note: +1 because rows start from 1 instead of 0 in js and another + 1 because the gridRowEnd seems to be the row BEFORE WHITCH the span ends.
             }
         }
 
@@ -252,7 +231,7 @@ namespace Windows.UI.Xaml.Controls
             if (element.IsUnderCustomLayout)
                 return;
             int maxColumn = 0;
-            if (element.IsConnectedToLiveTree && element.INTERNAL_VisualParent is Grid) //Note: this also checks if INTERNAL_VisualTreeManager.IsElementInVisualTree(element) is true because there is no point in setting it on Windows and Popups.
+            if (INTERNAL_VisualTreeManager.IsElementInVisualTree(element) && element.INTERNAL_VisualParent is Grid) //Note: this also checks if INTERNAL_VisualTreeManager.IsElementInVisualTree(element) is true because there is no point in setting it on Windows and Popups.
             {
                 Grid parent = (Grid)element.INTERNAL_VisualParent;
                 if (parent._columnDefinitionsOrNull != null && parent._columnDefinitionsOrNull.Count > 0)
@@ -269,17 +248,8 @@ namespace Windows.UI.Xaml.Controls
                     int lastColumn = elementColumn + columnSpan - 1; //note: there was a -1 here before but it seems to not give he result expected.
                     MakeGridPositionCorrect(ref lastColumn, maxColumn);
 
-                    bool isMsGrid = Grid_InternalHelpers.isMSGrid();
-                    if (!isMsGrid)
-                    {
-                        style.gridColumnStart = (elementColumn + 1).ToString(); //Note: +1 because columns start from 1 instead of 0 in js.
-                        style.gridColumnEnd = (lastColumn + 2).ToString(); //Note: +1 because columns start from 1 instead of 0 in js and another + 1 because the gridColumnEnd seems to be the column BEFORE WHITCH the span ends.
-                    }
-                    else
-                    {
-                        style.msGridColumn = (elementColumn + 1).ToString(); //Note: +1 because columns start from 1 instead of 0 in js.
-                        style.msGridColumnSpan = (columnSpan).ToString(); //Note: +1 because columns start from 1 instead of 0 in js and another + 1 because the gridColumnEnd seems to be the column BEFORE WHITCH the span ends.
-                    }
+                    style.gridColumnStart = (elementColumn + 1).ToString(); //Note: +1 because columns start from 1 instead of 0 in js.
+                    style.gridColumnEnd = (lastColumn + 2).ToString(); //Note: +1 because columns start from 1 instead of 0 in js and another + 1 because the gridColumnEnd seems to be the column BEFORE WHITCH the span ends.
                 }
             }
         }
@@ -312,16 +282,7 @@ namespace Windows.UI.Xaml.Controls
             int columnIndex = _columnDefinitionsOrNull.IndexOf(columnDefinition);
 
             var div1 = AddTemporaryDivForRowOrColumnDimensions(columnIndex, 0);
-
-            if (CSharpXamlForHtml5.Environment.IsRunningInJavaScript)
-            {
-                returnValue = ((dynamic)div1).offsetWidth;
-            }
-            else
-            {
-                returnValue = Convert.ToDouble(INTERNAL_HtmlDomManager.GetDomElementAttribute(div1, "offsetWidth"));
-            }
-
+            returnValue = INTERNAL_HtmlDomManager.GetDomElementAttributeInt32(div1, "offsetWidth");
             INTERNAL_HtmlDomManager.RemoveFromDom(div1);
 
             return returnValue;
@@ -335,16 +296,7 @@ namespace Windows.UI.Xaml.Controls
             int rowIndex = _rowDefinitionsOrNull.IndexOf(rowDefinition);
 
             var div1 = AddTemporaryDivForRowOrColumnDimensions(0, rowIndex);
-
-            if (CSharpXamlForHtml5.Environment.IsRunningInJavaScript)
-            {
-                returnValue = ((dynamic)div1).offsetHeight;
-            }
-            else
-            {
-                returnValue = Convert.ToDouble(INTERNAL_HtmlDomManager.GetDomElementAttribute(div1, "offsetHeight"));
-            }
-
+            returnValue = INTERNAL_HtmlDomManager.GetDomElementAttributeInt32(div1, "offsetHeight");
             INTERNAL_HtmlDomManager.RemoveFromDom(div1);
 
             return returnValue;
@@ -358,19 +310,8 @@ namespace Windows.UI.Xaml.Controls
             div1style.height = "100%";
             div1style.opacity = "0";
             div1style.position = "relative";
-
-            bool isMsGrid = Grid_InternalHelpers.isMSGrid();
-            if (!isMsGrid)
-            {
-                div1style.gridColumnStart = (columnIndex + 1).ToString(); //Note: +1 because columns start from 1 instead of 0 in js.
-                div1style.gridRowStart = (rowIndex + 1).ToString(); //Note: +1 because columns start from 1 instead of 0 in js.
-            }
-            else
-            {
-                div1style.msGridColumn = (columnIndex + 1).ToString(); //Note: +1 because columns start from 1 instead of 0 in js.
-                div1style.msGridRow = (rowIndex + 1).ToString(); //Note: +1 because columns start from 1 instead of 0 in js.
-            }
-
+            div1style.gridColumnStart = (columnIndex + 1).ToString(); //Note: +1 because columns start from 1 instead of 0 in js.
+            div1style.gridRowStart = (rowIndex + 1).ToString(); //Note: +1 because columns start from 1 instead of 0 in js.
             return div1;
         }
     }

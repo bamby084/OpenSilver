@@ -1,5 +1,4 @@
 ﻿
-
 /*===================================================================================
 * 
 *   Copyright (c) Userware/OpenSilver.net
@@ -12,20 +11,12 @@
 *  
 \*====================================================================================*/
 
-using CSHTML5.Types;
 using System;
-
-#if BRIDGE
-using Bridge;
-using DotNetBrowser;
-#endif
-
-#if OPENSILVER
-#endif
+using DotNetForHtml5.Core;
 
 namespace CSHTML5.Internal
 {
-    internal class OnCallbackSimulator
+    internal sealed class OnCallbackSimulator
     {
         public OnCallbackSimulator()
         {
@@ -53,38 +44,45 @@ namespace CSHTML5.Internal
             object callbackArgsObject,
             bool returnValue)
         {
-            return OnCallBackImpl.Instance.OnCallbackFromJavaScript(callbackId, idWhereCallbackArgsAreStored, callbackArgsObject,
-                MakeArgumentsForCallbackSimulator, true, returnValue);
-        }
+            object result = null;
+            var actionExecuted = false;
 
-        private static object[] MakeArgumentsForCallbackSimulator(
-            int count,
-            int callbackId,
-            string idWhereCallbackArgsAreStored,
-            object callbackArgs,
-            Type[] callbackGenericArgs)
-        {
-            var result = new object[count];
-
-            for (int i = 0; i < count; i++)
+            void InvokeCallback()
             {
-                var arg = new INTERNAL_JSObjectReference(callbackArgs, idWhereCallbackArgsAreStored, i);
-                if (callbackGenericArgs != null
-                    && i < callbackGenericArgs.Length
-                    && callbackGenericArgs[i] != typeof(object)
-                    && (
-                    callbackGenericArgs[i].IsPrimitive
-                    || callbackGenericArgs[i] == typeof(string)))
+                try
                 {
-                    // Attempt to cast from JS object to the desired primitive or string type. This is useful for example when passing an Action<string> to an Interop.ExecuteJavaScript so as to not get an exception that says that it cannot cast the JS object into string (when running in the Simulator only):
-                    result[i] = Convert.ChangeType(arg, callbackGenericArgs[i]);
+                    result = OnCallBackImpl.Instance.OnCallbackFromJavaScript(
+                        callbackId,
+                        idWhereCallbackArgsAreStored,
+                        callbackArgsObject);
+                    
+                    actionExecuted = true;
                 }
-                else
+                catch (Exception ex)
                 {
-                    result[i] = arg;
+                    Console.Error.WriteLine("DEBUG: OnCallBack: OnCallBackFromJavascript: " + ex);
+                    throw;
+                }
+
+                INTERNAL_ExecuteJavaScript.ExecutePendingJavaScriptCode();
+            }
+
+            // Go back to the UI thread because DotNetBrowser calls the callback from the socket background thread:
+            if (returnValue)
+            {
+                var timeout = TimeSpan.FromSeconds(30);
+                INTERNAL_Simulator.WebControlDispatcherInvoke(InvokeCallback, timeout);
+                if (!actionExecuted)
+                {
+                    throw GenerateDeadlockException(timeout);
                 }
             }
-            return result;
+            else
+            {
+                INTERNAL_Simulator.WebControlDispatcherBeginInvoke(InvokeCallback);
+            }
+
+            return returnValue ? result : null;
         }
 
         private static void CheckIsRunningInTheSimulator()
@@ -93,6 +91,17 @@ namespace CSHTML5.Internal
             {
                 throw new InvalidOperationException($"'{nameof(OnCallbackSimulator)}' is not supported in the browser.");
             }
+        }
+
+        private static ApplicationException GenerateDeadlockException(TimeSpan timeout)
+        {
+            return new ApplicationException(
+                $"The callback method has not finished execution in {timeout} seconds.\n" +
+                "This method was called in a sync way, and very likely, the process is deadlocked. It happens when the code from the UI thread calls JS code, which calls C# back synchronously.\n" +
+                "The Example:\n" +
+                "OpenSilver.Interop.ExecuteJavaScript(\"$0();\", (Func<string>)(() => \"Message from C#\"));\n" +
+                "The solution:\n" +
+                "If a callback returns a value(for example, a Func), verify that this callback is not invoked from the C# code in the UI thread.");
         }
     }
 }

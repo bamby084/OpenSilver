@@ -12,8 +12,9 @@
 *  
 \*====================================================================================*/
 
-using CSHTML5;
 using System;
+using CSHTML5;
+using CSHTML5.Internal;
 
 #if !MIGRATION
 using Windows.UI.Xaml.Interop;
@@ -27,6 +28,9 @@ namespace Windows.UI.Xaml // Note: we didn't use the "Interop" namespace to avoi
 {
     public partial class Content
     {
+        private readonly JavaScriptCallback _fullscreenchangeCallback;
+        private readonly JavaScriptCallback _windowresizeCallback;
+
         public Content() : this(false)
         {
         }
@@ -35,11 +39,16 @@ namespace Windows.UI.Xaml // Note: we didn't use the "Interop" namespace to avoi
         {
             if (hookupEvents)
             {
+                _fullscreenchangeCallback = JavaScriptCallback.Create(FullScreenChangedCallback, true);
+                _windowresizeCallback = JavaScriptCallback.Create(WindowResizeCallback, true);
+
                 // Hooks the FullScreenChanged event
-                CSHTML5.Interop.ExecuteJavaScript(@"document.addEventListener('fullscreenchange', $0)", new Action(FullScreenChangedCallback));
+                OpenSilver.Interop.ExecuteJavaScriptVoid(
+                    $"document.addEventListener('fullscreenchange', {INTERNAL_InteropImplementation.GetVariableStringForJS(_fullscreenchangeCallback)})");
 
                 // Hooks the Resized event
-                CSHTML5.Interop.ExecuteJavaScript("new ResizeSensor(document.getXamlRoot(), $0)", new Action(WindowResizeCallback));
+                OpenSilver.Interop.ExecuteJavaScriptVoid(
+                    $"new ResizeSensor(document.getXamlRoot(), {INTERNAL_InteropImplementation.GetVariableStringForJS(_windowresizeCallback)})");
 
                 // WORKINPROGRESS
                 // Add Zoomed event
@@ -75,31 +84,19 @@ namespace Windows.UI.Xaml // Note: we didn't use the "Interop" namespace to avoi
         {
             get
             {
-                return Convert.ToBoolean(CSHTML5.Interop.ExecuteJavaScript(@"
-(function(){
-    if (window.IE_VERSION)
-    {
-        // Internet Explorer:
-        return (window.screenTop == 0);
-    }
-    else
-    {
-        // Other browsers:
-        return (window.innerHeight == screen.height);
-    }
-}())"));
+                return OpenSilver.Interop.ExecuteJavaScriptBoolean(
+@"(function() {
+ if (window.IE_VERSION) return (window.screenTop == 0);
+ else return (window.innerHeight == screen.height);
+}())");
             }
             set
             {
                 if (value)
                 {
-#if OPENSILVER
-                    if (!CSHTML5.Interop.IsRunningInTheSimulator_WorkAround)
-#else
-                    if (!CSHTML5.Interop.IsRunningInTheSimulator)
-#endif
+                    if (!OpenSilver.Interop.IsRunningInTheSimulator)
                     {
-                        CSHTML5.Interop.ExecuteJavaScript(@"
+                        OpenSilver.Interop.ExecuteJavaScriptVoid(@"
 var element = document.body;
 var requestMethod = element.requestFullScreen || element.webkitRequestFullScreen || element.mozRequestFullScreen || element.msRequestFullScreen;
 if (requestMethod) {
@@ -113,7 +110,7 @@ if (requestMethod) {
                 }
                 else
                 {
-                    CSHTML5.Interop.ExecuteJavaScript(@"
+                    OpenSilver.Interop.ExecuteJavaScriptVoid(@"
 var requestMethod = document.exitFullScreen || document.webkitExitFullScreen || document.webkitCancelFullScreen || document.mozCancelFullScreen || document.msExitFullScreen || document.msCancelFullScreen;
 if (requestMethod) {
     requestMethod.call(document);
@@ -128,7 +125,7 @@ if (requestMethod) {
         /// <returns> 
         /// The zoom setting for the current browser window.
         /// </returns>
-        public double ZoomFactor => Convert.ToDouble(CSHTML5.Interop.ExecuteJavaScript("window.devicePixelRatio"));
+        public double ZoomFactor => OpenSilver.Interop.ExecuteJavaScriptDouble("window.devicePixelRatio", false);
 
 
         /// <summary>
@@ -147,7 +144,7 @@ if (requestMethod) {
         /// </summary>
         private void FullScreenChangedCallback()
         {
-            FullScreenChanged?.Invoke(this, EventArgs.Empty);
+            FullScreenChanged?.Invoke(Application.Current?.RootVisual, EventArgs.Empty);
         }
 
         /// <summary>
@@ -156,7 +153,7 @@ if (requestMethod) {
         /// </summary>
         private void WindowResizeCallback()
         {
-            Resized?.Invoke(this, EventArgs.Empty);
+            Resized?.Invoke(Application.Current?.RootVisual, EventArgs.Empty);
         }
 
         /// <summary>

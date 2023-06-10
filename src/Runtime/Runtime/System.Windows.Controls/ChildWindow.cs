@@ -1148,8 +1148,8 @@ namespace Windows.UI.Xaml.Controls
             base.OnApplyTemplate();
 
             // We let clicks go through the OuterDomElement so the ChildWindow can be non-Modal:
-            CSHTML5.Interop.ExecuteJavaScript("$0.style.pointerEvents = 'none';", INTERNAL_OuterDomElement);
-
+            OpenSilver.Interop.ExecuteJavaScriptVoid(
+                $"{CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(INTERNAL_OuterDomElement)}.style.pointerEvents = 'none';");
 
             UpdateIsModalVisualState();
 
@@ -1420,8 +1420,6 @@ namespace Windows.UI.Xaml.Controls
             this.MaxHeight = double.PositiveInfinity;
             this.MaxWidth = double.PositiveInfinity;
 #endif
-
-            this.ChildWindowPopup.INTERNAL_AllowDisableClickTransparency = false; //this is set to false because we want to be able to move from Modal to non-Modal, which needs click transparency (so we cannot disable it).
 
             if (this.ChildWindowPopup != null)
             {

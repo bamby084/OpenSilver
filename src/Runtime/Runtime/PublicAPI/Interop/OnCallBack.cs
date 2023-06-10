@@ -11,19 +11,9 @@
 *  
 \*====================================================================================*/
 
-using CSHTML5.Types;
 using System;
-using System.Collections.Generic;
 using System.ComponentModel;
-
-#if BRIDGE
-using Bridge;
-using DotNetBrowser;
-#endif
-
-#if OPENSILVER
 using Microsoft.JSInterop;
-#endif
 
 namespace CSHTML5.Internal
 {
@@ -59,38 +49,24 @@ namespace CSHTML5.Internal
             object[] callbackArgsObject,
             bool returnValue)
         {
-            return OnCallBackImpl.Instance.OnCallbackFromJavaScript(callbackId, idWhereCallbackArgsAreStored, callbackArgsObject,
-                MakeArgumentsForCallbackBrowser, false, returnValue);
-        }
+            object result = null;
 
-        private static object[] MakeArgumentsForCallbackBrowser(
-            int count,
-            int callbackId,
-            string idWhereCallbackArgsAreStored,
-            object[] callbackArgs,
-            Type[] callbackGenericArgs)
-        {
-            var result = new object[count];
-
-            for (int i = 0; i < count; i++)
+            try
             {
-                var arg = new INTERNAL_JSObjectReference(callbackArgs, idWhereCallbackArgsAreStored, i);
-                if (callbackGenericArgs != null
-                    && i < callbackGenericArgs.Length
-                    && callbackGenericArgs[i] != typeof(object)
-                    && (
-                    callbackGenericArgs[i].IsPrimitive
-                    || callbackGenericArgs[i] == typeof(string)))
-                {
-                    // Attempt to cast from JS object to the desired primitive or string type. This is useful for example when passing an Action<string> to an Interop.ExecuteJavaScript so as to not get an exception that says that it cannot cast the JS object into string (when running in the Simulator only):
-                    result[i] = Convert.ChangeType(arg, callbackGenericArgs[i]);
-                }
-                else
-                {
-                    result[i] = arg;
-                }
+                result = OnCallBackImpl.Instance.OnCallbackFromJavaScript(
+                    callbackId,
+                    idWhereCallbackArgsAreStored,
+                    callbackArgsObject);
             }
-            return result;
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("DEBUG: OnCallBack: OnCallBackFromJavascript: " + ex);
+                throw;
+            }
+
+            INTERNAL_ExecuteJavaScript.ExecutePendingJavaScriptCode();
+
+            return returnValue ? result : null;
         }
 
         private static void CheckIsRunningInBrowser()

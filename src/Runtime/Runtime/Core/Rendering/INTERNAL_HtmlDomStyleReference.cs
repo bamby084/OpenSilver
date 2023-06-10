@@ -94,19 +94,19 @@ namespace CSHTML5.Internal
         void SetStylePropertyValue(string propertyName, string propertyValue)
         {
             string javaScriptCodeToExecute = $@"document.setDomStyle(""{Uid}"", ""{propertyName}"", ""{propertyValue}"")";
-            INTERNAL_SimulatorExecuteJavaScript.ExecuteJavaScriptAsync(javaScriptCodeToExecute);
+            INTERNAL_ExecuteJavaScript.QueueExecuteJavaScript(javaScriptCodeToExecute);
         }
 
         void SetTransformPropertyValue(string propertyValue)
         {
             string javaScriptCodeToExecute = $@"document.setDomTransform(""{Uid}"", ""{propertyValue}"")";
-            INTERNAL_SimulatorExecuteJavaScript.ExecuteJavaScriptAsync(javaScriptCodeToExecute);
+            INTERNAL_ExecuteJavaScript.QueueExecuteJavaScript(javaScriptCodeToExecute);
         }
 
         void SetTransformOriginPropertyValue(string propertyValue)
         {
             string javaScriptCodeToExecute = $@"document.setDomTransformOrigin(""{Uid}"", ""{propertyValue}"")";
-            INTERNAL_SimulatorExecuteJavaScript.ExecuteJavaScriptAsync(javaScriptCodeToExecute);
+            INTERNAL_ExecuteJavaScript.QueueExecuteJavaScript(javaScriptCodeToExecute);
         }
 
         //        string GetStylePropertyValue(string propertyName)
@@ -151,7 +151,10 @@ namespace CSHTML5.Internal
         public string cursor { set { SetStylePropertyValue("cursor", value); } }
         public string display { set { SetStylePropertyValue("display", value); _display = value; } get { return _display; } }
         public string filter { set { SetStylePropertyValue("filter", value); } }
+        public string fontFamily { set { SetStylePropertyValue("fontFamily", value); } }
         public string fontSize { set { SetStylePropertyValue("fontSize", value); } }
+        public string fontStyle { set { SetStylePropertyValue("fontStyle", value); } }
+        public string fontWeight { set { SetStylePropertyValue("fontWeight", value); } }
         public string gridColumnEnd { set { SetStylePropertyValue("gridColumnEnd", value); } }
         public string gridColumnStart { set { SetStylePropertyValue("gridColumnStart", value); } }
         public string gridRowEnd { set { SetStylePropertyValue("gridRowEnd", value); } }
@@ -180,6 +183,7 @@ namespace CSHTML5.Internal
         public string msTransform { set { transform = value; } }
         public string msTransformOrigin { set { transformOrigin = value; } }
         public string objectPosition { set { SetStylePropertyValue("objectPosition", value); } }
+        public string objectFit { set { SetStylePropertyValue("objectFit", value); } }
         public string opacity { set { SetStylePropertyValue("opacity", value); } }
         public string outline { set { SetStylePropertyValue("outline", value); } }
         public string overflow { set { SetStylePropertyValue("overflow", value); } }
@@ -210,6 +214,15 @@ namespace CSHTML5.Internal
         public string gridArea { set { SetStylePropertyValue("gridArea", value); } }
         public string visibility { set { SetStylePropertyValue("visibility", value); } }
         public string clip { set { SetStylePropertyValue("clip", value); } }
+        public string overflowWrap { set { SetStylePropertyValue("overflowWrap", value); } }
+        public string alignItems { set { SetStylePropertyValue("alignItems", value); } }
+        public string justifyContent { set { SetStylePropertyValue("justifyContent", value); } }
+        public string flexWrap { set { SetStylePropertyValue("flexWrap", value); } }
+        public string flexDirection { set { SetStylePropertyValue("flexDirection", value); } }
+        public string flex { set { SetStylePropertyValue("flex", value); } }
+        public string flexGrow { set { SetStylePropertyValue("flexGrow", value); } }
+        public string flexShrink { set { SetStylePropertyValue("flexShrink", value); } }
+        public string flexBasis { set { SetStylePropertyValue("flexBasis", value); } }
 
         //-----------------------------------------------------------------------
         // Usage stats for To-Do Calendar (number of types each property is set):

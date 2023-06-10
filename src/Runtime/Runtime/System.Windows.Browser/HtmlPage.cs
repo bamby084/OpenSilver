@@ -19,26 +19,30 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
-using System.Windows.Browser;
+using System.Windows.Browser.Internal;
+using CSHTML5.Internal;
+using CSHTML5.Types;
+
+#if !MIGRATION
+using Windows.UI.Xaml;
+#endif
 
 namespace System.Windows.Browser
 {
     public static class HtmlPage
     {
-        private static HtmlWindow _initWindow;
-        private static HtmlDocument _initDocument;
-        private static HtmlElement _initPlugin;
+        private static HtmlElement _plugin;
         private static BrowserInformation _browserInformation;
 
         /// <summary>
         /// Gets the browser's window object.
         /// </summary>
-        public static HtmlWindow Window => _initWindow ?? (_initWindow = new HtmlWindow());
+        public static HtmlWindow Window { get; } = new HtmlWindow(new WindowRef());
 
         /// <summary>
         /// Gets the browser's document object.
         /// </summary>
-        public static HtmlDocument Document => _initDocument ?? (_initDocument = new HtmlDocument());
+        public static HtmlDocument Document { get; } = new HtmlDocument(new DocumentRef());
 
         [OpenSilver.NotImplemented]
         public static bool IsPopupWindowAllowed => false;
@@ -46,6 +50,14 @@ namespace System.Windows.Browser
         [OpenSilver.NotImplemented]
         public static HtmlWindow PopupWindow(Uri navigateToUri, string target, HtmlPopupWindowOptions options)
         {
+            if (options != null)
+            {
+                Window.Navigate(navigateToUri, target, options.ToFeaturesString());
+            }
+            else
+            {
+                Window.Navigate(navigateToUri, target);
+            }
             return null;
         }
 
@@ -53,11 +65,46 @@ namespace System.Windows.Browser
         /// Gets a reference to the Silverlight plug-in that is defined within an &lt;object&gt;
         /// or &lt;embed&gt; tag on the host HTML page.
         /// </summary>
-        [OpenSilver.NotImplemented]
-        public static HtmlElement Plugin => _initPlugin ?? (_initPlugin = new HtmlElement());
+        public static HtmlElement Plugin
+        {
+            get
+            {
+                if (_plugin is null)
+                {
+                    object root = INTERNAL_HtmlDomManager.GetApplicationRootDomElement();
+                    if (root is not null)
+                    {
+                        string id = OpenSilver.Interop.ExecuteJavaScriptString(
+                            $"{CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(root)}.id");
 
-        [OpenSilver.NotImplemented]
-        public static bool IsEnabled { get; private set; }
+                        _plugin = Document.GetElementById(id);
+                    }
+                }
+
+                return _plugin;
+            }
+        }
+
+        /// <summary>
+        /// Gets a value that indicates whether the rest of the public surface area of the
+        /// HTML Bridge feature is enabled.
+        /// </summary>
+        /// <returns>
+        /// true if the HTML Bridge feature is enabled; otherwise, false.
+        /// </returns>
+        public static bool IsEnabled
+        {
+            get
+            {
+                var app = Application.Current;
+                if (app is not null)
+                {
+                    return app.Host.Settings.EnableHTMLAccess;
+                }
+
+                return true;
+            }
+        }
 
         /// <summary>
         /// Gets general information about the browser, such as name, version, and operating system.
@@ -71,9 +118,9 @@ namespace System.Windows.Browser
             {
                 if (_browserInformation == null)
                 {
-                    string userAgent = Convert.ToString(OpenSilver.Interop.ExecuteJavaScript("navigator.userAgent"))
+                    string userAgent = OpenSilver.Interop.ExecuteJavaScriptString("navigator.userAgent", false)
                         ?? throw new InvalidOperationException("Cannot retrieve UserAgent");
-                    string platform = Convert.ToString(OpenSilver.Interop.ExecuteJavaScript("navigator.platform"));
+                    string platform = OpenSilver.Interop.ExecuteJavaScriptString("navigator.platform", false);
 
                     _browserInformation = new BrowserInformation(userAgent, platform);
                 }
@@ -96,7 +143,9 @@ namespace System.Windows.Browser
         /// </exception>
         public static void RegisterScriptableObject(string scriptKey, object instance)
         {
-            OpenSilver.Interop.ExecuteJavaScript("window[$0]={};", scriptKey);
+            string sScriptKey = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(scriptKey);
+
+            OpenSilver.Interop.ExecuteJavaScriptVoid($"window[{sScriptKey}]={{}};");
 
             var methods = instance.GetType().GetMethods()
                 .Where(m => m.GetCustomAttributes(typeof(ScriptableMemberAttribute), false).Length > 0)
@@ -104,7 +153,8 @@ namespace System.Windows.Browser
 
             foreach (var method in methods)
             {
-                OpenSilver.Interop.ExecuteJavaScript("window[$0][$1] = function () { return $2(...arguments); }", scriptKey, method.Name, (Func<CSHTML5.Types.INTERNAL_JSObjectReference, object>)(jsObjectReference =>
+                string sMethodName = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS(method.Name);
+                string sCallback = CSHTML5.INTERNAL_InteropImplementation.GetVariableStringForJS((Func<INTERNAL_JSObjectReference, object>)(jsObjectReference =>
                 {
                     var parameters = method.GetParameters();
                     var args = new object[parameters.Length];
@@ -115,6 +165,8 @@ namespace System.Windows.Browser
                     }
                     return method.Invoke(instance, args);
                 }));
+
+                OpenSilver.Interop.ExecuteJavaScriptVoid($"window[{sScriptKey}][{sMethodName}] = function () {{ return {sCallback}(...arguments); }}");
             }
 
             var events = instance.GetType().GetEvents()
@@ -124,13 +176,7 @@ namespace System.Windows.Browser
             foreach (var eventInfo in events)
             {
                 var es = new EventSubscriber(scriptKey, eventInfo.Name);
-#if BRIDGE
-                //Bridge.Net does not support EventHandlerType.
-                var eventHandlerType = eventInfo.AddMethod.GetParameters()[0].ParameterType;
-#else
                 var eventHandlerType = eventInfo.EventHandlerType;
-#endif
-
                 var methodName = "OnRaisedBridgeNet";
                 var method = eventHandlerType.GetMethod("Invoke");
                 if (method != null)
@@ -142,6 +188,57 @@ namespace System.Windows.Browser
                 var d = Delegate.CreateDelegate(eventHandlerType, es,
                     es.GetType().GetMethods().First(mi => mi.Name == methodName));
                 eventInfo.AddEventHandler(instance, d);
+            }
+        }
+
+        /// <summary>
+        /// Registers a managed type as available for creation from JavaScript code, through
+        /// the Content.services.createObject and Content.services.createManagedObject helper
+        /// methods.
+        /// </summary>
+        /// <param name="scriptAlias">
+        /// The name used to register the managed type.
+        /// </param>
+        /// <param name="type">
+        /// A managed type.
+        /// </param>
+        /// <exception cref="ArgumentNullException">
+        /// scriptAlias or type is null.
+        /// </exception>
+        /// <exception cref="ArgumentException">
+        /// type is not public.-or-type does not have a public, parameterless constructor.-or-type
+        /// is a string, primitive or value type, managed delegate, or empty string.-or-type
+        /// contains an embedded null character (<see cref="char.MinValue"/>).-or-An attempt is made to reregister
+        /// type.
+        /// </exception>
+        [OpenSilver.NotImplemented]
+        public static void RegisterCreateableType(string scriptAlias, Type type)
+        {
+            ScriptObject.ValidateParameter(scriptAlias);
+
+            if (type is null)
+            {
+                throw new ArgumentNullException(nameof(type));
+            }
+
+            if (!type.IsVisible)
+            {
+                throw new ArgumentException($"'{nameof(type)}' must be a public type.", nameof(type));
+            }
+
+            if (type.IsAbstract)
+            {
+                throw new ArgumentException($"'{nameof(type)}' cannot be abstract.", nameof(type));
+            }
+
+            if (type.GetConstructor(Type.EmptyTypes) is null)
+            {
+                throw new ArgumentException($"'{nameof(type)}' must have a public parameterless constructor.", nameof(type));
+            }
+
+            if (type == typeof(string) || type.IsPrimitive || typeof(Delegate).IsAssignableFrom(type))
+            {
+                throw new ArgumentException($"'{nameof(type)}' is not a valid type.", nameof(type));
             }
         }
     }
