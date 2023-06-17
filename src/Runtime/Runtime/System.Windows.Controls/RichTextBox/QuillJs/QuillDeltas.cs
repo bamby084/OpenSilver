@@ -18,7 +18,7 @@ namespace OpenSilver.Internal.Controls
     internal sealed class QuillDelta
     {
         [JsonPropertyName("insert")]
-        public string Text { get; set; }
+        public object Insert { get; set; }
 
         [JsonPropertyName("attributes")]
         public QuillRangeFormat Attributes { get; set; }

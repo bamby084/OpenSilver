@@ -219,6 +219,7 @@
 		<Compile Include="System.Windows.Controls\ListBoxDragDropTarget.cs" />
 		<Compile Include="System.Windows.Controls\PasswordBoxView.cs" />
 		<Compile Include="System.Windows.Controls\RichTextBox\INTERNAL_TextContainerRichTextBox.cs" />
+		<EmbeddedResource Include="System.Windows.Controls\RichTextBox\QuillJs\quill-custom-blots.js" />
 		<Compile Include="System.Windows.Controls\RichTextBox\QuillJs\QuillDeltas.cs" />
 		<Compile Include="System.Windows.Controls\RichTextBox\RichTextBoxView.cs" />
 		<Compile Include="System.Windows.Controls\RichTextBox\QuillJs\QuillRange.cs" />

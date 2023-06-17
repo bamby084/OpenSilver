@@ -693,6 +693,11 @@ namespace Windows.UI.Xaml.Controls
         internal void InsertText(string text)
             => _textViewHost?.View.InsertText(text);
 
+        internal void InsertDelta(QuillDeltas delta)
+        {
+            _textViewHost?.View.InsertDelta(delta);
+        }
+
         private void SetReadOnly(bool value)
             => _textViewHost?.View.SetReadOnly(value);
 
