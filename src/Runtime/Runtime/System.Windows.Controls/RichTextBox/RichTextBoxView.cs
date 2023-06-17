@@ -21,6 +21,8 @@ using System.Xml;
 using CSHTML5.Internal;
 using OpenSilver.Internal.Controls;
 using OpenSilver.Internal;
+using System.IO;
+using System.Reflection;
 
 #if MIGRATION
 using System.Windows.Documents;
@@ -161,10 +163,23 @@ else { JSON.stringify({ start: 0, length: 0 }); }", _quill))
         {
             if (_quill == null)
                 return;
-
+            
             OpenSilver.Interop.ExecuteJavaScriptVoid(
                 $"$0.insertText($0.getLength(), {HttpUtility.JavaScriptStringEncode(text, true)}, 'api')", flushQueue: false,
                 _quill);
+        }
+
+        internal void InsertDelta(QuillDeltas delta)
+        {
+            if (_quill == null)
+                return;
+            var jsDelta = JsonSerializer.Serialize(delta, new JsonSerializerOptions()
+            {
+                IgnoreNullValues = true
+            });
+
+            string script = "const delta = JSON.parse($1); delta.ops.unshift({retain: $0.getLength()}); $0.updateContents(delta, 'api')";
+            OpenSilver.Interop.ExecuteJavaScriptVoid(script, flushQueue: false, _quill, jsDelta);
         }
 
         internal void SelectAll()
@@ -363,6 +378,13 @@ else { JSON.stringify({ start: 0, length: 0 }); }", _quill))
             return string.Join(" ", names);
         }
 
+        private static void LoadBlots()
+        {
+            string resourceName = "System.Windows.Controls\\RichTextBox\\QuillJs\\quill-custom-blots.js";
+            string blots =  ReadEmbeddedResource(resourceName);
+            OpenSilver.Interop.ExecuteJavaScriptVoid(blots);
+        }
+
         private string GetXamlContents(string content)
         {
             if (string.IsNullOrEmpty(content))
@@ -379,7 +401,7 @@ else { JSON.stringify({ start: 0, length: 0 }); }", _quill))
             foreach (var delta in deltas.Operations)
             {
                 var run = xaml.CreateElement("Run", xaml.DocumentElement.NamespaceURI);
-                run.InnerText = delta.Text.TrimEnd('\n');
+                run.InnerText = delta.Insert?.ToString().TrimEnd('\n');
 
                 if (delta.Attributes != null)
                 {
@@ -421,6 +443,8 @@ else { JSON.stringify({ start: 0, length: 0 }); }", _quill))
                     $"let font = Quill.import('attributors/style/font');font.whitelist=[{GetSupportedFonts()}];Quill.register(font,true);");
                 OpenSilver.Interop.ExecuteJavaScriptVoid(
                     $"let size = Quill.import('attributors/style/size');size.whitelist=[{GetSupportedFontSizes()}];Quill.register(size,true);");
+                
+                LoadBlots();
             }
         }
 
@@ -454,6 +478,16 @@ else { JSON.stringify({ start: 0, length: 0 }); }", _quill))
             };
 
             return string.Join(",", supportedFonts.Select(f => $"'{f.ToString().ToLower().Replace(" ", "-")}'"));
+        }
+
+        private static string ReadEmbeddedResource(string resourceName)
+        {
+            using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName))
+            using (var streamReader = new StreamReader(stream))
+            {
+                string content = streamReader.ReadToEnd();
+                return content;
+            }
         }
     }
 }

@@ -12,6 +12,8 @@
 \*====================================================================================*/
 
 #if MIGRATION
+using OpenSilver.Internal.Controls;
+using System.Collections.Generic;
 using System.Windows.Documents;
 #else
 using Windows.UI.Xaml.Documents;
@@ -39,17 +41,44 @@ namespace Windows.UI.Xaml.Controls
         {
             if (textElement is Paragraph paragraph)
             {
-                string text = "";
+                var ops = new List<QuillDelta>();
+
                 foreach (var inline in paragraph.Inlines)
                 {
                     if (inline is Run run)
                     {
-                        text += run.Text;
+                        var op = new QuillDelta();
+                        op.Insert = run.Text;
+                        ops.Add(op);
+                    }
+                    else if(inline is Hyperlink link)
+                    {
+                        var op = new QuillDelta();
+                        string linkText = "";
+                        foreach(var linkInline in link.Inlines)
+                        {
+                            if(linkInline is Run linkRun)
+                            {
+                                linkText += linkRun.Text;
+                            }
+                        }
+
+                        op.Insert = new
+                        {
+                            hyperlink = new
+                            {
+                                text = linkText,
+                                href = link.NavigateUri.ToString()
+                            }
+                        };
+                        ops.Add(op);
                     }
                     //TODO: support other Inlines
                 }
 
-                _parent.InsertText(text);
+                var delta = new QuillDeltas();
+                delta.Operations = ops.ToArray();
+                _parent.InsertDelta(delta);
             }
             else if (textElement is Section)
             {
