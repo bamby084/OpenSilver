@@ -19,7 +19,6 @@
 		<NoCSHTML5Reference>true</NoCSHTML5Reference>
 		<EnableDefaultItems>false</EnableDefaultItems>
 		<!-- This emluates the behavior of NET Framework, which excludes every files by default -->
-		<OpenSilverVersion>1.1.0</OpenSilverVersion>
 	</PropertyGroup>
 
 	<PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'SL|AnyCPU' ">
@@ -51,7 +50,11 @@
 		<Compile Include="Core\Main\EffectiveValueEntry.cs" />
 		<Compile Include="Core\Main\EmptyEnumerator.cs" />
 		<Compile Include="Core\Main\InheritablePropertyChangeInfo.cs" />
-		<Compile Include="Core\Main\INTERNAL_NamedObject.cs" />
+		<Compile Include="OpenSilver\Internal\DefaultValueFactory.cs" />
+		<Compile Include="OpenSilver\Internal\DependencyObjectType.cs" />
+		<Compile Include="OpenSilver\Internal\KnownBoxes.cs" />
+		<Compile Include="OpenSilver\Internal\NamedObject.cs" />
+		<Compile Include="OpenSilver\Internal\ValidateValueCallback.cs" />
 		<Compile Include="Core\Main\PrePostDescendentsWalker.cs" />
 		<Compile Include="Core\Main\WeakReferenceList.cs" />
 		<Compile Include="Core\Main\WeakReferenceListEnumerator.cs" />
@@ -66,6 +69,7 @@
 		<Compile Include="OpenSilver\Internal\Helper.cs" />
 		<Compile Include="OpenSilver\Internal\INameResolver.cs" />
 		<Compile Include="OpenSilver\Internal\InheritedPropertyChangedEventArgs.cs" />
+		<Compile Include="OpenSilver\Internal\PFCDefaultValueFactory.cs" />
 		<Compile Include="OpenSilver\Internal\ReferenceIDGenerator.cs" />
 		<Compile Include="OpenSilver\Internal\ResizeObserver.cs" />
 		<Compile Include="OpenSilver\Internal\StringBuilderFactory.cs" />
@@ -103,6 +107,9 @@
 		<Compile Include="OpenSilver\Internal\Xaml\ServiceProviderContext.cs" />
 		<Compile Include="OpenSilver\IO\MemoryFileInfo.cs" />
 		<Compile Include="OpenSilver\NotImplementedAttribute.cs" />
+		<Compile Include="OpenSilver\Runtime\CompilerServices\OpenSilverAssemblyAttribute.cs" />
+		<Compile Include="OpenSilver\Runtime\CompilerServices\OpenSilverResourceExposureAttribute.cs" />
+		<Compile Include="OpenSilver\Utility\FrugalMap.cs" />
 		<Compile Include="PagedCollectionView\CollectionViewGroupInternal.cs" />
 		<Compile Include="PagedCollectionView\CollectionViewGroupRoot.cs" />
 		<Compile Include="PagedCollectionView\IPagedCollectionView.cs" />
@@ -260,6 +267,7 @@
 		<Compile Include="System.Windows.Controls\MatchedTextInfo.cs" />
 		<Compile Include="System.Windows.Controls\WORKINPROGRESS\ObservableObjectCollection.cs" />
 		<Compile Include="System.Windows.Controls\WrapPanelHelper.cs" />
+		<Compile Include="System.Windows.Documents\TextElementProperties.cs" />
 		<Compile Include="System.Windows.input\KeyboardNavigation.cs" />
 		<Compile Include="System.Windows.input\TraversalRequest.cs" />
 		<Compile Include="System.Windows.Markup\DependencyPropertyConverter.cs" />
@@ -320,6 +328,7 @@
 		<Compile Include="System.Windows.Media\DoubleCollectionConverter.cs" />
 		<Compile Include="System.Windows\DataObject.SL.cs" />
 		<Compile Include="System.Windows\DataTemplateKey.cs" />
+		<Compile Include="System.Windows\DependencyPropertyKey.cs" />
 		<Compile Include="System.Windows\DurationConverter.cs" />
 		<Compile Include="System.Windows.Media\FontFamilyConverter.cs" />
 		<Compile Include="System.Windows\EventHandlersStore.cs" />
@@ -349,6 +358,7 @@
 		<Compile Include="System.Windows\LengthConverter.cs" />
 		<Compile Include="System.Windows\PointConverter.cs" />
 		<Compile Include="System.Windows\PropertyPathConverter.cs" />
+		<Compile Include="System.Windows\ReadOnlyPropertyMetadata.cs" />
 		<Compile Include="System.Windows\RectConverter.cs" />
 		<Compile Include="System.Windows.Media.Animation\RepeatBehaviorConverter.cs" />
 		<Compile Include="System.Windows\RoutedEventHandlerInfo.cs" />
@@ -495,7 +505,6 @@
 		<Compile Include="System.Windows.Media\WORKINPROGRESS\TextHintingMode.cs" />
 		<Compile Include="System.Windows.Media\WORKINPROGRESS\TextOptions.cs" />
 		<Compile Include="System.Windows.Media\WORKINPROGRESS\TextRenderingMode.cs" />
-		<Compile Include="System.Windows.Media\WORKINPROGRESS\VisualTreeHelper.cs" />
 		<Compile Include="System.Windows\ResourceDictionaryCollection.cs" />
 		<Compile Include="System.Windows\ResourcesChangeInfo.cs" />
 		<Compile Include="System.Windows\TreeWalkHelper.cs" />
@@ -635,8 +644,6 @@
 		<Compile Include="Core\Main\INTERNAL_PropertyStore.cs" />
 		<Compile Include="Core\Main\INTERNAL_Simulator.cs" />
 		<Compile Include="Core\Main\INTERNAL_ExecuteJavaScript.cs" />
-		<Compile Include="Core\Main\INTERNAL_TypeToDependencyPropertiesThatRequirePropertyChanged.cs" />
-		<Compile Include="Core\Main\INTERNAL_TypeToStringToDependencyProperty.cs" />
 		<Compile Include="Core\Main\INTERNAL_UriHelper.cs" />
 		<Compile Include="Core\Main\NamespacesDocumentation.cs" />
 		<Compile Include="Core\Main\TypeFromStringConverters.cs" />
@@ -1345,8 +1352,6 @@
   
 	<!-- See ths comment on the first <Import> -->
 	<Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
-
-	<Import Project="..\..\packages\OpenSilver.$(OpenSilverVersion)\build\OpenSilver.targets" Condition=" '$(Configuration)|$(Platform)' == 'SL|AnyCPU' " />
-	<Import Project="..\..\packages\OpenSilver.UWPCompatible.$(OpenSilverVersion)\build\OpenSilver.UwpCompatible.targets" Condition=" '$(Configuration)|$(Platform)' == 'UWP|AnyCPU' " />
+	<Import Project="$(OpenSilverTargets)" />
 
 </Project>

@@ -15,7 +15,6 @@
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
-using CSHTML5.Internal;
 using OpenSilver.Internal.Data;
 
 #if MIGRATION
@@ -62,7 +61,7 @@ namespace Windows.UI.Xaml
             }
 
             // Note: consider caching the default value as we should always have d == Target.
-            return _targetProperty.GetMetadata(_target.GetType()).DefaultValue; 
+            return _targetProperty.GetDefaultValue(_target);
         }
 
         internal override void OnAttach(DependencyObject d, DependencyProperty dp)
@@ -95,11 +94,6 @@ namespace Windows.UI.Xaml
             listener?.Dispose();
         }
 
-        internal override void SetValue(DependencyObject d, DependencyProperty dp, object value)
-        {
-            return;
-        }
-
         private void OnPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs args)
         {
             _target.ApplyExpression(_targetProperty, this, false);
@@ -107,7 +101,7 @@ namespace Windows.UI.Xaml
 
         private bool ValidateValue(ref object value, DependencyProperty targetProperty)
         {
-            if (DependencyProperty.IsValueTypeValid(value, targetProperty.PropertyType))
+            if (targetProperty.IsValidValue(value))
             {
                 return true;
             }

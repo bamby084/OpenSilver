@@ -351,14 +351,15 @@ namespace Windows.UI.Xaml.Controls
         }
 
         /// <summary>
-        /// Identifies the MaxLength dependency property.
+        /// Identifies the <see cref="MaxLength"/> dependency property.
         /// </summary>
         public static readonly DependencyProperty MaxLengthProperty =
             DependencyProperty.Register(
                 nameof(MaxLength),
                 typeof(int),
                 typeof(TextBox),
-                new PropertyMetadata(0, OnMaxLengthChanged));
+                new PropertyMetadata(0, OnMaxLengthChanged),
+                MaxLengthValidateValue);
 
         private static void OnMaxLengthChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
@@ -367,6 +368,11 @@ namespace Windows.UI.Xaml.Controls
             {
                 tb._textViewHost.View.OnMaxLengthChanged((int)e.NewValue);
             }
+        }
+
+        private static bool MaxLengthValidateValue(object value)
+        {
+            return ((int)value) >= 0;
         }
 
 #if MIGRATION
@@ -642,17 +648,12 @@ namespace Windows.UI.Xaml.Controls
 
             e.Handled = true;
             Focus();
+#if MIGRATION
+            _textViewHost?.View.CaptureMouse();
+#else
+            _textViewHost?.View.CapturePointer(e.Pointer);
+#endif
         }
-
-        /// <summary>
-        /// Returns a <see cref="TextBoxAutomationPeer"/> for use by the Silverlight automation 
-        /// infrastructure.
-        /// </summary>
-        /// <returns>
-        /// A <see cref="TextBoxAutomationPeer"/> for the <see cref="TextBox"/> object.
-        /// </returns>
-        protected override AutomationPeer OnCreateAutomationPeer()
-            => new TextBoxAutomationPeer(this);
 
 #if MIGRATION
         protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
@@ -666,8 +667,28 @@ namespace Windows.UI.Xaml.Controls
             base.OnPointerReleased(e);
 #endif
 
+            if (e.Handled)
+            {
+                return;
+            }
+
             e.Handled = true;
+#if MIGRATION
+            _textViewHost?.View.ReleaseMouseCapture();
+#else
+            _textViewHost?.View.ReleasePointerCapture(e.Pointer);
+#endif
         }
+
+        /// <summary>
+        /// Returns a <see cref="TextBoxAutomationPeer"/> for use by the Silverlight automation 
+        /// infrastructure.
+        /// </summary>
+        /// <returns>
+        /// A <see cref="TextBoxAutomationPeer"/> for the <see cref="TextBox"/> object.
+        /// </returns>
+        protected override AutomationPeer OnCreateAutomationPeer()
+            => new TextBoxAutomationPeer(this);
 
 #if MIGRATION
         protected override void OnMouseEnter(MouseEventArgs e)
